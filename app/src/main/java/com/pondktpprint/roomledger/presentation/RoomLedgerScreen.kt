@@ -49,6 +49,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pondktpprint.roomledger.domain.RoomRecord
 import com.pondktpprint.roomledger.domain.RoomRepository
 import com.pondktpprint.roomledger.domain.formatSatangAsBaht
+import com.pondktpprint.roomledger.RoomLedgerApplication
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +61,15 @@ fun RoomLedgerScreen(repository: RoomRepository) {
     var editorRoom by remember { mutableStateOf<RoomRecord?>(null) }
     var showEditor by rememberSaveable { mutableStateOf(false) }
     var billingDestination by rememberSaveable { mutableStateOf(0) }
+    var showBackupSettings by rememberSaveable { mutableStateOf(false) }
+
+    if (showBackupSettings) {
+        BackupSettingsScreen(
+            database = (androidx.compose.ui.platform.LocalContext.current.applicationContext as RoomLedgerApplication).database,
+            onBack = { showBackupSettings = false },
+        )
+        return
+    }
 
     if (billingDestination != 0) {
         BillingSection(rooms, repository, onBack = { billingDestination = 0 }, startWithHistory = billingDestination == 2)
@@ -95,6 +105,8 @@ fun RoomLedgerScreen(repository: RoomRepository) {
                 OutlinedButton(onClick = { billingDestination = 1 }, modifier = Modifier.weight(1f)) { Text("บันทึกมิเตอร์") }
                 OutlinedButton(onClick = { billingDestination = 2 }, modifier = Modifier.weight(1f)) { Text("ประวัติบิล") }
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { showBackupSettings = true }, modifier = Modifier.fillMaxWidth()) { Text("ตั้งค่า · สำรองและกู้คืนข้อมูล") }
             Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
