@@ -94,7 +94,12 @@ class RoomRepositoryImpl(private val roomDao: RoomDao, private val billingDao: B
         val db = database ?: error("Database transaction unavailable")
         return db.withTransaction {
             val bill = billingDao.findBill(billId) ?: error("ไม่พบบิล")
-            val sources = componentSources(bill).sortedBy { billingDao.findBill(it)?.billingMonth ?: "" }
+            val sourcesWithMonths = mutableListOf<Pair<String, String>>()
+            for (source in componentSources(bill)) {
+                val month = billingDao.findBill(source)?.billingMonth ?: ""
+                sourcesWithMonths += source to month
+            }
+            val sources = sourcesWithMonths.sortedBy { it.second }.map { it.first }
             val balances = mutableMapOf<String, Long>()
             for (source in sources) balances[source] = sourceOutstanding(source)
             val totalOutstanding = balances.values.fold(0L) { total, amount -> Math.addExact(total, amount) }
