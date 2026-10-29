@@ -48,6 +48,24 @@ object RoomLedgerBackup {
     private val tables = listOf("rooms", "meter_readings", "bills", "payments", "payment_allocations", "debt_carry_forwards")
     private val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(ZoneId.systemDefault())
 
+    suspend fun encryptedBytes(database: RoomLedgerDatabase, passphrase: CharArray, nowMillis: Long = System.currentTimeMillis()): ByteArray {
+        val output = ByteArrayOutputStream()
+        write(database, output, passphrase, nowMillis)
+        return output.toByteArray()
+    }
+
+    suspend fun latestLocalChangeAt(database: RoomLedgerDatabase): Long = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            var latest = 0L
+            for ((table, column) in listOf("rooms" to "updatedAtMillis", "meter_readings" to "updatedAtMillis", "bills" to "updatedAtMillis", "payments" to "updatedAtMillis", "payment_allocations" to "createdAtMillis", "debt_carry_forwards" to "updatedAtMillis")) {
+                database.openHelper.writableDatabase.query("SELECT COALESCE(MAX(`$column`), 0) FROM `$table`").use { cursor ->
+                    if (cursor.moveToFirst()) latest = maxOf(latest, cursor.getLong(0))
+                }
+            }
+            latest
+        }
+    }
+
     suspend fun write(database: RoomLedgerDatabase, output: OutputStream, passphrase: CharArray, nowMillis: Long = System.currentTimeMillis()) = withContext(Dispatchers.IO) {
         requirePassphrase(passphrase)
         val snapshot = database.withTransaction { snapshotJson(database) }
