@@ -1,5 +1,37 @@
 # RoomLedger
 
-Android rental room management application.
+แอป Android สำหรับจัดการห้องเช่า ระยะที่ 1 พัฒนาด้วย Kotlin, Jetpack Compose, Material 3, Room และ MVVM ข้อมูลห้องเก็บไว้ใน SQLite บนอุปกรณ์และใช้งานได้โดยไม่ต้องเชื่อมต่ออินเทอร์เน็ต
 
-Built with Kotlin, Jetpack Compose and Room Database.
+## ความสามารถ
+
+- แดชบอร์ดภาษาไทย แสดงจำนวนห้องที่เปิดใช้งานและค่าเช่ารวมต่อเดือน
+- เพิ่มและแก้ไขชื่อห้อง ค่าเช่ารายเดือน อัตราค่าน้ำ และอัตราค่าไฟ
+- เปิดหรือปิดใช้งานห้องโดยเก็บรายการไว้ในฐานข้อมูล
+- แสดงข้อความเมื่อยังไม่มีข้อมูลห้องพัก
+- รองรับธีมสว่างและมืดตามการตั้งค่าระบบ
+- ตรวจสอบข้อมูลก่อนบันทึก และจัดเก็บจำนวนเงินเป็น `Long` หน่วยสตางค์
+- ใช้ UUID เป็นรหัสห้อง พร้อมเวลา `createdAtMillis` และ `updatedAtMillis`
+
+## เทคโนโลยีและโครงสร้าง
+
+- Kotlin 2.0.21, Gradle Kotlin DSL และ Android Gradle Plugin 8.7.3
+- Jetpack Compose, Material 3 และ Lifecycle ViewModel/StateFlow
+- Room 2.6.1 สำหรับ SQLite แบบออฟไลน์
+- Repository interface คั่นระหว่าง ViewModel กับฐานข้อมูล เพื่อรองรับแหล่งสำรองข้อมูลในอนาคต โดยยังไม่มีการเชื่อม Firebase
+
+`presentation` มีหน้าจอและ ViewModel, `domain` มีโมเดล/กฎตรวจสอบ/สัญญา Repository และ `data` มี Room DAO, entity และการแปลงข้อมูล
+
+## เริ่มต้นพัฒนา
+
+ต้องติดตั้ง JDK 17 ขึ้นไปและ Android SDK Platform 35 พร้อม Android Build Tools ที่ Gradle ต้องใช้ เปิดโปรเจกต์นี้ใน Android Studio หรือรันจาก root:
+
+```bash
+./gradlew assembleDebug
+./gradlew testDebugUnitTest
+```
+
+หาก Android SDK อยู่ในตำแหน่งที่ไม่ใช่ค่ามาตรฐาน ให้กำหนด `ANDROID_HOME` หรือสร้าง `local.properties` ในเครื่องนักพัฒนาโดยกำหนด `sdk.dir` (ไฟล์นี้ถูก ignore และห้าม commit)
+
+## ทดสอบ
+
+Unit tests ครอบคลุมการแปลงเงินบาทเป็นสตางค์ การตรวจสอบข้อมูล และการจัดรูปแบบจำนวนเงิน รันด้วย `./gradlew testDebugUnitTest`
