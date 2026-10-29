@@ -7,4 +7,10 @@ interface RoomRepository {
     fun observeRooms(): Flow<List<RoomRecord>>
     suspend fun saveRoom(room: RoomRecord)
     suspend fun setRoomActive(id: String, isActive: Boolean, updatedAtMillis: Long)
+    suspend fun billsForMonth(month: String): List<MonthlyBill>
+    suspend fun billHistory(roomId: String): List<MonthlyBill>
+    suspend fun priorReading(roomId: String, month: String): ReadingDraft?
+    suspend fun laterReadingCount(roomId: String, month: String): Int
+    suspend fun saveReading(room: RoomRecord, draft: ReadingDraft, confirmedLaterImpact: Boolean, updatedAtMillis: Long): MonthlyBill
+    suspend fun reconcilePayment(bill: MonthlyBill, state: PaymentState, updatedAtMillis: Long)
 }

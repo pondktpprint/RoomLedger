@@ -11,7 +11,7 @@ class RoomLedgerApplication : Application() {
             applicationContext,
             RoomLedgerDatabase::class.java,
             "room-ledger.db",
-        ).build()
-        RoomRepositoryImpl(database.roomDao())
+        ).addMigrations(RoomLedgerDatabase.MIGRATION_1_2).build()
+        RoomRepositoryImpl(database.roomDao(), database.billingDao(), database)
     }
 }
