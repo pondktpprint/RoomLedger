@@ -1,6 +1,11 @@
 package com.pondktpprint.roomledger.presentation
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,11 +18,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.pondktpprint.roomledger.domain.*
 import kotlinx.coroutines.launch
 import java.time.YearMonth
@@ -100,9 +107,37 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun BillDetailsPage(bill: MonthlyBill, repository: RoomRepository, onBack: () -> Unit, onUpdated: (MonthlyBill) -> Unit) {
     val scope = rememberCoroutineScope()
-    var confirmPayment by remember { mutableStateOf(false) }
+    var summary by remember(bill.id) { mutableStateOf<BillFinancialSummary?>(null) }
+    var amount by remember(bill.id) { mutableStateOf("") }
+    var paymentDate by remember(bill.id) { mutableStateOf(java.time.LocalDate.now().toString()) }
+    var note by remember(bill.id) { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirmClose by remember { mutableStateOf(false) }
+    var reverseTarget by remember { mutableStateOf<PaymentRecord?>(null) }
+    var reversalNote by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    var imageMessage by remember { mutableStateOf<String?>(null) }
+    var shouldExport by remember { mutableStateOf(false) }
+    var shareAfterExport by remember { mutableStateOf(false) }
+    val mediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) shouldExport = true else imageMessage = "ไม่ได้รับสิทธิ์บันทึกรูป"
+    }
+    LaunchedEffect(shouldExport) {
+        if (shouldExport) {
+            shouldExport = false
+            val shouldShare = shareAfterExport
+            runCatching { val uri = BillImageExport.save(context, summary ?: error("ข้อมูลบิลยังโหลดไม่เสร็จ")); if (shouldShare) BillImageExport.share(context, uri) }
+                .onSuccess { imageMessage = if (shouldShare) "สร้างรูปบิลและเปิดเมนูแชร์แล้ว" else "บันทึกรูปบิลไว้ใน Pictures/RoomLedger แล้ว" }
+                .onFailure { imageMessage = it.message ?: "ส่งออกภาพบิลไม่สำเร็จ" }
+        }
+    }
+    fun requestBillImage(share: Boolean) {
+        shareAfterExport = share
+        if (Build.VERSION.SDK_INT < 29 && ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) mediaPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        else shouldExport = true
+    }
+    LaunchedEffect(bill.id, bill.updatedAtMillis) { runCatching { repository.financialSummary(bill.id) }.onSuccess { summary = it; onUpdated(it.bill) }.onFailure { error = it.message ?: "โหลดข้อมูลการชำระไม่สำเร็จ" } }
     BackHandler(onBack = onBack)
     Scaffold(topBar = { TopAppBar(title = { Text("รายละเอียดบิล") }, navigationIcon = { IconButton(onClick = onBack) { Text("‹", style = MaterialTheme.typography.headlineMedium) } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -114,14 +149,51 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
                 CalculationLine("ครั้งก่อน", bill.waterPrevious.toString()); CalculationLine("ปัจจุบัน", bill.waterCurrent.toString()); CalculationLine("ใช้ไป", "${bill.waterUnits} หน่วย"); CalculationLine("อัตราต่อหน่วย", formatSatangCurrency(bill.waterRateSatang)); CalculationLine("รวมค่าน้ำ", formatSatangCurrency(bill.waterChargeSatang))
                 HorizontalDivider(); Text("ค่าไฟ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 CalculationLine("ครั้งก่อน", bill.electricityPrevious.toString()); CalculationLine("ปัจจุบัน", bill.electricityCurrent.toString()); CalculationLine("ใช้ไป", "${bill.electricityUnits} หน่วย"); CalculationLine("อัตราต่อหน่วย", formatSatangCurrency(bill.electricityRateSatang)); CalculationLine("รวมค่าไฟ", formatSatangCurrency(bill.electricityChargeSatang))
-                HorizontalDivider(); CalculationLine("ยอดรวมทั้งสิ้น", formatSatangCurrency(bill.totalSatang), true)
+                if (bill.carriedDebtSatang > 0) { HorizontalDivider(); CalculationLine("ยอดค้างยกมาจากรอบก่อน", formatSatangCurrency(bill.carriedDebtSatang)) }
+                HorizontalDivider(); CalculationLine("ยอดเรียกเก็บ", formatSatangCurrency(bill.totalDueSatang), true)
             } }
-            Text(if (bill.paymentState == PaymentState.PAID) "สถานะ: ชำระแล้ว" else "สถานะ: ยังไม่ชำระ", style = MaterialTheme.typography.titleMedium, color = if (bill.paymentState == PaymentState.PAID) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            Text(if (bill.paymentState == PaymentState.PAID) "สถานะ: ชำระแล้ว" else if ((summary?.totalReceivedSatang ?: 0L) > 0) "สถานะ: ชำระบางส่วน" else "สถานะ: ยังไม่ชำระ", style = MaterialTheme.typography.titleMedium, color = if (bill.paymentState == PaymentState.PAID) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            summary?.let { financial ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text("การรับชำระ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    CalculationLine("ยอดบิล", formatSatangCurrency(financial.totalBilledSatang)); CalculationLine("รับเงินแล้ว", formatSatangCurrency(financial.totalReceivedSatang)); CalculationLine("คงเหลือ", formatSatangCurrency(financial.outstandingSatang), true)
+                    Text("ประวัติรับเงิน", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (financial.payments.isEmpty()) Text("ยังไม่มีรายการรับเงิน", style = MaterialTheme.typography.bodySmall)
+                    financial.payments.forEach { payment ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text("${if (payment.entryType == PaymentEntryType.REVERSAL) "กลับรายการ" else "รับเงิน"} · ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale("th", "TH")).format(java.util.Date(payment.paymentDateMillis))}"); payment.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) } }
+                            Text((if (payment.entryType == PaymentEntryType.REVERSAL) "−" else "+") + formatSatangCurrency(payment.amountSatang), fontWeight = FontWeight.Medium)
+                            if (payment.entryType == PaymentEntryType.RECEIPT && financial.isClosed.not()) TextButton(onClick = { reverseTarget = payment }) { Text("แก้ไข") }
+                            else if (payment.entryType == PaymentEntryType.RECEIPT) TextButton(onClick = { reverseTarget = payment }) { Text("กลับรายการ") }
+                        }
+                    }
+                } }
+            } ?: LinearProgressIndicator(Modifier.fillMaxWidth())
+            OutlinedTextField(amount, { amount = it }, label = { Text("จำนวนเงินที่รับ (บาท)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            OutlinedTextField(paymentDate, { paymentDate = it }, label = { Text("วันที่รับเงิน (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(note, { if (it.length <= 500) note = it }, label = { Text("หมายเหตุ (ไม่บังคับ)") }, modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 3)
+            Button(enabled = !saving && summary != null, onClick = {
+                val satang = runCatching { java.math.BigDecimal(amount.replace(",", "").trim()).movePointRight(2).setScale(0, java.math.RoundingMode.UNNECESSARY).longValueExact() }.getOrNull()
+                val date = runCatching { java.time.LocalDate.parse(paymentDate) }.getOrNull()
+                if (satang == null || satang <= 0) error = "กรุณากรอกจำนวนเงินเป็นบาทไม่เกิน 2 ตำแหน่งทศนิยม"
+                else if (date == null) error = "กรุณากรอกวันที่ในรูปแบบ YYYY-MM-DD"
+                else {
+                    saving = true; error = null
+                    scope.launch { runCatching { repository.recordPayment(bill.id, satang, date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), note, System.currentTimeMillis()) }.onSuccess { amount = ""; note = ""; summary = repository.financialSummary(bill.id); summary?.let { onUpdated(it.bill) } }.onFailure { error = it.message ?: "บันทึกรับเงินไม่สำเร็จ" }; saving = false }
+                }
+            }, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("บันทึกรับเงิน") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = summary != null, onClick = { requestBillImage(false) }, modifier = Modifier.weight(1f)) { Text("บันทึกเป็นรูป") }
+                OutlinedButton(enabled = summary != null, onClick = { requestBillImage(true) }, modifier = Modifier.weight(1f)) { Text("แชร์รูป") }
+            }
+            imageMessage?.let { Text(it, color = if (it.startsWith("ไม่ได้")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
+            if (summary?.isClosed == true) Text("ปิดบิลแล้ว · ${summary?.closedAtMillis?.let { java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale("th", "TH")).format(java.util.Date(it)) }.orEmpty()}", color = MaterialTheme.colorScheme.primary)
+            else OutlinedButton(onClick = { confirmClose = true }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("ปิดบิล") }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (bill.paymentState == PaymentState.UNPAID) Button(onClick = { confirmPayment = true }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("ทำเครื่องหมายว่าชำระแล้ว") }
         }
     }
-    if (confirmPayment) AlertDialog(onDismissRequest = { if (!saving) confirmPayment = false }, title = { Text("ยืนยันการชำระเงิน") }, text = { Text("ยืนยันว่าห้อง ${bill.roomName} ชำระบิล ${thaiMonth(bill.billingMonth)} จำนวน ${formatSatangCurrency(bill.totalSatang)} แล้วหรือไม่") }, confirmButton = { Button(enabled = !saving, onClick = { confirmPayment = false; saving = true; scope.launch { runCatching { repository.reconcilePayment(bill, PaymentState.PAID, System.currentTimeMillis()) }.onSuccess { onUpdated(bill.copy(paymentState = PaymentState.PAID, updatedAtMillis = System.currentTimeMillis())) }.onFailure { error = it.message ?: "ปรับสถานะไม่สำเร็จ" }; saving = false } }) { Text("ยืนยันว่าชำระแล้ว") } }, dismissButton = { TextButton(enabled = !saving, onClick = { confirmPayment = false }) { Text("ยังไม่ชำระ") } })
+    if (confirmClose) AlertDialog(onDismissRequest = { if (!saving) confirmClose = false }, title = { Text("ยืนยันปิดบิล") }, text = { Text("ปิดบิล ${thaiMonth(bill.billingMonth)} จำนวน ${formatSatangCurrency(summary?.totalBilledSatang ?: bill.totalDueSatang)} โดยมียอดคงเหลือ ${formatSatangCurrency(summary?.outstandingSatang ?: bill.totalDueSatang)} ใช่หรือไม่ ยอดเรียกเก็บจะถูกตรึงและยอดค้างจะยกไปรอบถัดไป") }, confirmButton = { Button(enabled = !saving, onClick = { saving = true; scope.launch { runCatching { repository.closeBill(bill.id, System.currentTimeMillis()) }.onSuccess { confirmClose = false; summary = repository.financialSummary(bill.id); summary?.let { onUpdated(it.bill) } }.onFailure { error = it.message ?: "ปิดบิลไม่สำเร็จ" }; saving = false } }) { Text("ยืนยันปิดบิล") } }, dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("ยกเลิก") } })
+    if (reverseTarget != null) AlertDialog(onDismissRequest = { if (!saving) reverseTarget = null }, title = { Text("ยืนยันแก้ไขรายการรับเงิน") }, text = { Column { Text("ระบบจะสร้างรายการกลับเงิน ${formatSatangCurrency(reverseTarget!!.amountSatang)} โดยเก็บประวัติเดิมไว้"); OutlinedTextField(reversalNote, { reversalNote = it.take(500) }, label = { Text("เหตุผลการแก้ไข") }, modifier = Modifier.fillMaxWidth()) } }, confirmButton = { Button(enabled = !saving && reversalNote.isNotBlank(), onClick = { val payment = reverseTarget!!; saving = true; scope.launch { runCatching { repository.reversePayment(payment.id, reversalNote, System.currentTimeMillis()) }.onSuccess { reverseTarget = null; reversalNote = ""; summary = repository.financialSummary(bill.id); summary?.let { onUpdated(it.bill) } }.onFailure { error = it.message ?: "กลับรายการไม่สำเร็จ" }; saving = false } }) { Text("ยืนยันกลับรายการ") } }, dismissButton = { TextButton(onClick = { reverseTarget = null }) { Text("ยกเลิก") } })
 }
 
 @Composable private fun MonthSelector(month: YearMonth, onMonthChange: (YearMonth) -> Unit) {
@@ -135,14 +207,14 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
 @Composable private fun RoomMonthCard(room: RoomRecord, bill: MonthlyBill?, open: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = open)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(room.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Text(if (bill == null) "รอบิล" else "บันทึกแล้ว · ${if (bill.paymentState == PaymentState.PAID) "ชำระแล้ว" else "ยังไม่ชำระ"}", style = MaterialTheme.typography.bodySmall, color = if (bill == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary) }
-        Text(bill?.let { formatSatangCurrency(it.totalSatang) } ?: "บันทึกมิเตอร์ ›", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+        Text(bill?.let { formatSatangCurrency(it.totalDueSatang) } ?: "บันทึกมิเตอร์ ›", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
     } }
 }
 
 @Composable private fun BillHistoryCard(bill: MonthlyBill, open: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = open)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(thaiMonth(bill.billingMonth), style = MaterialTheme.typography.titleMedium); Text(if (bill.paymentState == PaymentState.PAID) "ชำระแล้ว" else "ยังไม่ชำระ", style = MaterialTheme.typography.bodySmall) }
-        Text(formatSatangCurrency(bill.totalSatang), fontWeight = FontWeight.Bold)
+        Text(formatSatangCurrency(bill.totalDueSatang), fontWeight = FontWeight.Bold)
     } }
 }
 

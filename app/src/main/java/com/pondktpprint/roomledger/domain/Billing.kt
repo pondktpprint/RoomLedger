@@ -6,6 +6,7 @@ import java.time.YearMonth
 import java.util.Locale
 
 enum class PaymentState { UNPAID, PAID }
+enum class PaymentEntryType { RECEIPT, REVERSAL }
 data class MeterInput(val previous: Long?, val current: Long?, val adjustmentUnits: Long = 0)
 data class BillCalculation(val waterUnits: Long, val electricityUnits: Long, val waterSatang: Long, val electricitySatang: Long, val rentSatang: Long, val totalSatang: Long)
 
@@ -30,7 +31,9 @@ object BillingCalculator {
 }
 
 data class ReadingDraft(val roomId: String, val billingMonth: String, val waterPrevious: Long, val waterCurrent: Long, val waterAdjustment: Long, val electricityPrevious: Long, val electricityCurrent: Long, val electricityAdjustment: Long)
-data class MonthlyBill(val id: String, val roomId: String, val roomName: String, val billingMonth: String, val waterPrevious: Long, val waterCurrent: Long, val waterAdjustment: Long, val waterUnits: Long, val waterRateSatang: Long, val waterChargeSatang: Long, val electricityPrevious: Long, val electricityCurrent: Long, val electricityAdjustment: Long, val electricityUnits: Long, val electricityRateSatang: Long, val electricityChargeSatang: Long, val rentSatang: Long, val totalSatang: Long, val paymentState: PaymentState, val createdAtMillis: Long, val updatedAtMillis: Long)
+data class MonthlyBill(val id: String, val roomId: String, val roomName: String, val billingMonth: String, val waterPrevious: Long, val waterCurrent: Long, val waterAdjustment: Long, val waterUnits: Long, val waterRateSatang: Long, val waterChargeSatang: Long, val electricityPrevious: Long, val electricityCurrent: Long, val electricityAdjustment: Long, val electricityUnits: Long, val electricityRateSatang: Long, val electricityChargeSatang: Long, val rentSatang: Long, val totalSatang: Long, val paymentState: PaymentState, val createdAtMillis: Long, val updatedAtMillis: Long, val carriedDebtSatang: Long = 0L, val totalDueSatang: Long = totalSatang, val closedAtMillis: Long? = null)
+data class PaymentRecord(val id: String, val billId: String, val amountSatang: Long, val paymentDateMillis: Long, val note: String?, val entryType: PaymentEntryType, val reversesPaymentId: String?, val createdAtMillis: Long, val updatedAtMillis: Long)
+data class BillFinancialSummary(val bill: MonthlyBill, val totalBilledSatang: Long, val totalReceivedSatang: Long, val outstandingSatang: Long, val payments: List<PaymentRecord>, val isClosed: Boolean, val closedAtMillis: Long?)
 
 fun formatSatangCurrency(satang: Long): String = "฿" + NumberFormat.getNumberInstance(Locale.US).apply { minimumFractionDigits = 2; maximumFractionDigits = 2 }.format(BigDecimal.valueOf(satang, 2))
 fun parseBillingMonth(month: String): YearMonth? = if (!month.matches(Regex("\\d{4}-(0[1-9]|1[0-2])"))) null else runCatching { YearMonth.parse(month) }.getOrNull()

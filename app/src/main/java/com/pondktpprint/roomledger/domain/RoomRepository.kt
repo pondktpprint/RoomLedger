@@ -14,5 +14,8 @@ interface RoomRepository {
     suspend fun readingForMonth(roomId: String, month: String): ReadingDraft?
     suspend fun laterReadingCount(roomId: String, month: String): Int
     suspend fun saveReading(room: RoomRecord, draft: ReadingDraft, confirmedLaterImpact: Boolean, updatedAtMillis: Long): MonthlyBill
-    suspend fun reconcilePayment(bill: MonthlyBill, state: PaymentState, updatedAtMillis: Long)
+    suspend fun financialSummary(billId: String): BillFinancialSummary
+    suspend fun recordPayment(billId: String, amountSatang: Long, paymentDateMillis: Long, note: String?, nowMillis: Long): PaymentRecord
+    suspend fun reversePayment(paymentId: String, note: String?, nowMillis: Long): PaymentRecord
+    suspend fun closeBill(billId: String, nowMillis: Long)
 }
