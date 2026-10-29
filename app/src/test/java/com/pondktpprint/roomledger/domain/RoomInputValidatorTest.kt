@@ -32,4 +32,12 @@ class RoomInputValidatorTest {
     fun allowsZeroUtilityRates() {
         assertTrue(RoomInputValidator.validate("A-101", "1", "0", "0.00") is RoomInputResult.Valid)
     }
+
+    @Test
+    fun acceptsProperlyGroupedMoneyInput() {
+        val result = RoomInputValidator.validate("A-101", "12,500.75", "1,200", "7")
+        assertTrue(result is RoomInputResult.Valid)
+        assertEquals(1_250_075L, (result as RoomInputResult.Valid).input.monthlyRentSatang)
+        assertTrue(RoomInputValidator.validate("A-101", "12,,500", "0", "0") is RoomInputResult.Invalid)
+    }
 }

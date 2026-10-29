@@ -1,10 +1,8 @@
 package com.pondktpprint.roomledger.domain
 
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.text.NumberFormat
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 enum class PaymentState { UNPAID, PAID }
@@ -34,5 +32,7 @@ object BillingCalculator {
 data class ReadingDraft(val roomId: String, val billingMonth: String, val waterPrevious: Long, val waterCurrent: Long, val waterAdjustment: Long, val electricityPrevious: Long, val electricityCurrent: Long, val electricityAdjustment: Long)
 data class MonthlyBill(val id: String, val roomId: String, val roomName: String, val billingMonth: String, val waterPrevious: Long, val waterCurrent: Long, val waterAdjustment: Long, val waterUnits: Long, val waterRateSatang: Long, val waterChargeSatang: Long, val electricityPrevious: Long, val electricityCurrent: Long, val electricityAdjustment: Long, val electricityUnits: Long, val electricityRateSatang: Long, val electricityChargeSatang: Long, val rentSatang: Long, val totalSatang: Long, val paymentState: PaymentState, val createdAtMillis: Long, val updatedAtMillis: Long)
 
-fun formatSatangCurrency(satang: Long): String = "฿" + NumberFormat.getNumberInstance(Locale("th", "TH")).apply { minimumFractionDigits = 2; maximumFractionDigits = 2 }.format(BigDecimal.valueOf(satang, 2))
-fun thaiMonth(month: String): String = runCatching { YearMonth.parse(month).format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale("th", "TH"))) }.getOrDefault(month)
+fun formatSatangCurrency(satang: Long): String = "฿" + NumberFormat.getNumberInstance(Locale.US).apply { minimumFractionDigits = 2; maximumFractionDigits = 2 }.format(BigDecimal.valueOf(satang, 2))
+fun parseBillingMonth(month: String): YearMonth? = if (!month.matches(Regex("\\d{4}-(0[1-9]|1[0-2])"))) null else runCatching { YearMonth.parse(month) }.getOrNull()
+fun formatBillingMonth(month: YearMonth): String = "${month.month.getDisplayName(java.time.format.TextStyle.FULL, Locale("th", "TH"))} ${month.year + 543}"
+fun thaiMonth(month: String): String = parseBillingMonth(month)?.let(::formatBillingMonth) ?: month

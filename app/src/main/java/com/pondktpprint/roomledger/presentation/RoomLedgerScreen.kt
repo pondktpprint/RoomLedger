@@ -59,10 +59,10 @@ fun RoomLedgerScreen(repository: RoomRepository) {
     val snackbarHostState = remember { SnackbarHostState() }
     var editorRoom by remember { mutableStateOf<RoomRecord?>(null) }
     var showEditor by rememberSaveable { mutableStateOf(false) }
-    var showBilling by rememberSaveable { mutableStateOf(false) }
+    var billingDestination by rememberSaveable { mutableStateOf(0) }
 
-    if (showBilling) {
-        BillingSection(rooms, repository, onBack = { showBilling = false })
+    if (billingDestination != 0) {
+        BillingSection(rooms, repository, onBack = { billingDestination = 0 }, startWithHistory = billingDestination == 2)
         return
     }
 
@@ -91,7 +91,10 @@ fun RoomLedgerScreen(repository: RoomRepository) {
         ) {
             DashboardSummary(rooms = rooms)
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = { showBilling = true }, modifier = Modifier.fillMaxWidth()) { Text("บันทึกมิเตอร์และดูบิลรายเดือน") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { billingDestination = 1 }, modifier = Modifier.weight(1f)) { Text("บันทึกมิเตอร์") }
+                OutlinedButton(onClick = { billingDestination = 2 }, modifier = Modifier.weight(1f)) { Text("ประวัติบิล") }
+            }
             Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

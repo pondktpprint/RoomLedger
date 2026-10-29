@@ -18,7 +18,7 @@ sealed interface RoomInputResult {
 /** Parses user-entered baht as decimal text, avoiding floating-point rounding in stored money. */
 object RoomInputValidator {
     private const val MAX_NAME_LENGTH = 60
-    private val amountPattern = Regex("\\d+(\\.\\d{1,2})?")
+    private val amountPattern = Regex("(?:\\d+|\\d{1,3}(?:,\\d{3})+)(\\.\\d{1,2})?")
 
     fun validate(name: String, rent: String, water: String, electricity: String): RoomInputResult {
         val cleanName = name.trim()
@@ -50,7 +50,7 @@ object RoomInputValidator {
         val normalized = value.trim()
         if (!amountPattern.matches(normalized)) return null
         return runCatching {
-            BigDecimal(normalized)
+            BigDecimal(normalized.replace(",", ""))
                 .movePointRight(2)
                 .setScale(0, RoundingMode.UNNECESSARY)
                 .longValueExact()

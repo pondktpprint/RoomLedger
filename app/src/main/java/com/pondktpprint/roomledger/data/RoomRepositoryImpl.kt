@@ -32,8 +32,10 @@ class RoomRepositoryImpl(private val roomDao: RoomDao, private val billingDao: B
     }
 
     override suspend fun billsForMonth(month: String) = billingDao.billsForMonth(month).map(BillEntity::toDomain)
+    override suspend fun billForRoomMonth(roomId: String, month: String) = billingDao.billsForMonth(month).firstOrNull { it.roomId == roomId }?.toDomain()
     override suspend fun billHistory(roomId: String) = billingDao.history(roomId).map(BillEntity::toDomain)
     override suspend fun priorReading(roomId: String, month: String): ReadingDraft? = billingDao.priorReading(roomId, month)?.let { ReadingDraft(roomId, month, it.waterCurrent, it.waterCurrent, 0, it.electricityCurrent, it.electricityCurrent, 0) }
+    override suspend fun readingForMonth(roomId: String, month: String): ReadingDraft? = billingDao.reading(roomId, month)?.let { ReadingDraft(roomId, month, it.waterPrevious, it.waterCurrent, it.waterAdjustment, it.electricityPrevious, it.electricityCurrent, it.electricityAdjustment) }
     override suspend fun laterReadingCount(roomId: String, month: String) = billingDao.laterReadingCount(roomId, month)
 
     override suspend fun saveReading(room: com.pondktpprint.roomledger.domain.RoomRecord, draft: ReadingDraft, confirmedLaterImpact: Boolean, updatedAtMillis: Long): MonthlyBill {

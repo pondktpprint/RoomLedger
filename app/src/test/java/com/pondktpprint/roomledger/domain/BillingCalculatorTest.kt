@@ -3,6 +3,7 @@ package com.pondktpprint.roomledger.domain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.time.YearMonth
 
 class BillingCalculatorTest {
     private val room = RoomRecord("r", "A-01", 500_000, 2_000, 500, true, 1, 1)
@@ -28,5 +29,19 @@ class BillingCalculatorTest {
 
     @Test fun formatsCurrencyWithSeparatorsAndTwoDecimals() {
         assertEquals("฿12,345.67", formatSatangCurrency(1_234_567))
+    }
+
+    @Test fun validatesMonthIdentifiersAndDisplaysThaiBuddhistEra() {
+        assertEquals(YearMonth.of(2026, 2), parseBillingMonth("2026-02"))
+        assertEquals(null, parseBillingMonth("2026-2"))
+        assertEquals(null, parseBillingMonth("2026-13"))
+        assertEquals(null, parseBillingMonth("2026-02-extra"))
+        assertEquals("กุมภาพันธ์ 2569", formatBillingMonth(YearMonth.of(2026, 2)))
+    }
+
+    @Test fun switchingMonthsKeepsDatabaseStyleMonthKeys() {
+        val selected = YearMonth.of(2026, 1)
+        assertEquals("2025-12", selected.minusMonths(1).toString())
+        assertEquals("2026-02", selected.plusMonths(1).toString())
     }
 }
