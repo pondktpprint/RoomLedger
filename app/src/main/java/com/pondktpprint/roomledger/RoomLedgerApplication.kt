@@ -6,12 +6,12 @@ import com.pondktpprint.roomledger.data.RoomRepositoryImpl
 import com.pondktpprint.roomledger.data.local.RoomLedgerDatabase
 
 class RoomLedgerApplication : Application() {
-    val repository by lazy {
-        val database = Room.databaseBuilder(
+    val database by lazy {
+        Room.databaseBuilder(
             applicationContext,
             RoomLedgerDatabase::class.java,
             "room-ledger.db",
         ).addMigrations(RoomLedgerDatabase.MIGRATION_1_2, RoomLedgerDatabase.MIGRATION_2_3).build()
-        RoomRepositoryImpl(database.roomDao(), database.billingDao(), database)
     }
+    val repository by lazy { RoomRepositoryImpl(database.roomDao(), database.billingDao(), database) }
 }
