@@ -45,7 +45,7 @@ class RoomRepositoryWorkflowTest {
             assertEquals(500L, edited.electricityRateSatang)
             assertEquals(1, repository.billHistory(room.id).count { it.billingMonth == "2026-02" })
 
-            repository.reconcilePayment(edited, PaymentState.PAID, 6)
+            repository.recordPayment(edited.id, edited.totalDueSatang, 6, "ชำระครบ", 6)
             db.close()
             db = openDb()
             repository = RoomRepositoryImpl(db.roomDao(), db.billingDao(), db)
@@ -68,7 +68,7 @@ class RoomRepositoryWorkflowTest {
             val room = RoomRecord("paid-room", "ห้องชำระ", 500_000, 100, 100, true, 1, 1)
             db.roomDao().upsert(room.toEntity())
             val saved = repository.saveReading(room, ReadingDraft(room.id, "2026-03", 10, 12, 0, 20, 22, 0), false, 2)
-            repository.reconcilePayment(saved, PaymentState.PAID, 3)
+            repository.recordPayment(saved.id, saved.totalDueSatang, 3, "ชำระครบ", 3)
             assertThrows(IllegalArgumentException::class.java) {
                 runBlocking { repository.saveReading(room, ReadingDraft(room.id, "2026-03", 10, 13, 0, 20, 22, 0), false, 4) }
             }
