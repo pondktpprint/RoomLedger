@@ -59,6 +59,12 @@ fun RoomLedgerScreen(repository: RoomRepository) {
     val snackbarHostState = remember { SnackbarHostState() }
     var editorRoom by remember { mutableStateOf<RoomRecord?>(null) }
     var showEditor by rememberSaveable { mutableStateOf(false) }
+    var showBilling by rememberSaveable { mutableStateOf(false) }
+
+    if (showBilling) {
+        BillingSection(rooms, repository, onBack = { showBilling = false })
+        return
+    }
 
     LaunchedEffect(formError) {
         if (formError != null && !showEditor) snackbarHostState.showSnackbar(formError.orEmpty())
@@ -84,6 +90,8 @@ fun RoomLedgerScreen(repository: RoomRepository) {
                 .padding(horizontal = 20.dp),
         ) {
             DashboardSummary(rooms = rooms)
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = { showBilling = true }, modifier = Modifier.fillMaxWidth()) { Text("บันทึกมิเตอร์และดูบิลรายเดือน") }
             Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
