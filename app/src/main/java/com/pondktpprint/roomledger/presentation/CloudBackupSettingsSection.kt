@@ -195,10 +195,15 @@ fun CloudBackupSettingsSection(database: RoomLedgerDatabase) {
                 }
                 OutlinedButton(enabled = !busy && selectedVersion != null, onClick = {
                     val choice = selectedVersion ?: return@OutlinedButton
-                    val uid = user?.uid ?: return@OutlinedButton
+                    val uid = user?.uid
+                    val cloudService = cloud
+                    if (uid == null || cloudService == null || auth?.currentUser?.uid != uid) {
+                        status = "กรุณาเข้าสู่ระบบและตรวจสอบการตั้งค่า Cloud ก่อนดาวน์โหลด"
+                        return@OutlinedButton
+                    }
                     busy = true; progress = 0f; status = "กำลังดาวน์โหลดและตรวจสอบข้อมูลสำรอง…"
                     scope.launch {
-                        runCatching { cloud!!.download(uid, choice) }
+                        runCatching { cloudService.download(uid, choice) }
                             .onSuccess { bytes -> cloudRestoreBytes = bytes; selectedVersion = choice; restorePassphrase = ""; showRestorePassphrase = true; status = null }
                             .onFailure { status = "ดาวน์โหลดไม่สำเร็จหรือข้อมูลสำรองตรวจสอบไม่ผ่าน กรุณาลองใหม่" }
                         busy = false
@@ -276,15 +281,23 @@ fun CloudBackupSettingsSection(database: RoomLedgerDatabase) {
         confirmButton = { Button(enabled = !busy, onClick = {
             val bytes = cloudRestoreBytes?.copyOf() ?: return@Button
             val secret = restoreSecret ?: return@Button
-            if (user?.uid == null) return@Button
+            val uid = user?.uid
+            val cloudService = cloud
+            if (uid == null || cloudService == null) {
+                status = "กรุณาเข้าสู่ระบบและตรวจสอบการตั้งค่า Cloud ก่อนกู้คืน"
+                return@Button
+            }
+            val selected = selectedVersion ?: return@Button
             showRestoreConfirmation = false; busy = true
             scope.launch {
                 try {
-                    require(selectedVersion != null) { "ไม่พบเวอร์ชันสำรองที่เลือก" }
+                    require(auth?.currentUser?.uid == uid) { "กรุณาเข้าสู่ระบบบัญชี Google เดิมก่อนกู้คืน" }
+                    require(selected.state == "COMPLETE") { "ข้อมูลสำรองยังไม่สมบูรณ์" }
                     RoomLedgerBackup.restore(database, bytes, secret)
                     status = "กู้คืนข้อมูลจาก Cloud สำเร็จ"
-                    versions = cloud.listVerified(uid)
-                    lastLocalChange = RoomLedgerBackup.latestLocalChangeAt(database)
+                    runCatching { RoomLedgerBackup.latestLocalChangeAt(database) to cloudService.listVerified(uid) }
+                        .onSuccess { (changedAt, restoredVersions) -> lastLocalChange = changedAt; versions = restoredVersions }
+                        .onFailure { status = "กู้คืนข้อมูลสำเร็จ แต่โหลดประวัติ Cloud ไม่ได้ กดโหลดรายการใหม่ได้" }
                 } catch (_: CancellationException) { status = "ยกเลิกการกู้คืน ข้อมูลในเครื่องยังคงอยู่" }
                 catch (_: Exception) { status = "กู้คืนไม่สำเร็จ ข้อมูลเดิมในเครื่องยังคงอยู่ กรุณาลองใหม่" }
                 finally { bytes.fill(0); clearCloudRestore(); busy = false }
