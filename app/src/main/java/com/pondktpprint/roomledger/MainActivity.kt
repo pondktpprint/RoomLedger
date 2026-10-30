@@ -17,8 +17,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val darkTheme = isSystemInDarkTheme()
             SideEffect {
-                window.statusBarColor = if (darkTheme) Color.rgb(17, 20, 17) else Color.rgb(247, 248, 245)
+                val systemBackground = if (darkTheme) Color.rgb(17, 26, 22) else Color.rgb(250, 250, 247)
+                window.statusBarColor = systemBackground
+                window.navigationBarColor = systemBackground
                 WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !darkTheme
+                WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !darkTheme
             }
             RoomLedgerTheme {
                 RoomLedgerScreen(repository = repository)
