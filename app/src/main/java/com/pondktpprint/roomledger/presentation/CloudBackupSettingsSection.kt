@@ -267,7 +267,7 @@ fun CloudBackupSettingsSection(database: RoomLedgerDatabase) {
         title = { Text("ยืนยันกู้คืนจาก Cloud") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("วันที่สำรอง: ${RoomLedgerBackup.formattedDate(info.createdAtMillis)}")
-            Text("ห้อง ${info.roomCount} · มิเตอร์ ${info.readingCount} · บิล ${info.billCount} · รายการรับเงิน ${info.paymentCount}")
+            Text("กลุ่ม ${info.groupCount} · ห้อง ${info.roomCount} · มิเตอร์ ${info.readingCount} · บิล ${info.billCount} · รายการรับเงิน ${info.paymentCount}")
             Text("การกู้คืนจะแทนที่ข้อมูลในเครื่องทั้งหมด และไม่รวมบิลหรือประวัติการชำระเงิน")
         } },
         confirmButton = { Button(enabled = !busy, onClick = { showRestoreConfirmation = true }) { Text("ดำเนินการต่อ") } },

@@ -30,6 +30,13 @@ class CloudBackupFormatTest {
         assertEquals(listOf("5", "4", "3"), CloudBackupFormat.latestThreeVerified(versions).map(CloudBackupVersion::id))
     }
 
+    @Test fun cloudAcceptsCurrentAndLegacyBackupPairsOnly() {
+        assertTrue(RoomLedgerBackup.supportsBackupVersion(1, 3))
+        assertTrue(RoomLedgerBackup.supportsBackupVersion(2, 4))
+        assertEquals(false, RoomLedgerBackup.supportsBackupVersion(1, 4))
+        assertEquals(false, RoomLedgerBackup.supportsBackupVersion(2, 3))
+    }
+
     @Test fun transientUploadOperationsAreRetriedButPermanentFailuresAreNot() = runBlocking {
         var attempts = 0
         val result = retryCloudOperation(maxAttempts = 3, initialDelayMillis = 0, isTransient = { it is IllegalStateException }) {

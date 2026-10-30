@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pondktpprint.roomledger.domain.RoomInputResult
 import com.pondktpprint.roomledger.domain.RoomInputValidator
 import com.pondktpprint.roomledger.domain.RoomRecord
+import com.pondktpprint.roomledger.domain.RoomGroup
 import com.pondktpprint.roomledger.domain.RoomRepository
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,8 @@ class RoomLedgerViewModel(
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     val rooms: StateFlow<List<RoomRecord>> = repository.observeRooms()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val roomGroups: StateFlow<List<RoomGroup>> = repository.observeRoomGroups()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _formError = MutableStateFlow<String?>(null)
@@ -53,6 +56,7 @@ class RoomLedgerViewModel(
                             isActive = existing?.isActive ?: true,
                             createdAtMillis = existing?.createdAtMillis ?: now,
                             updatedAtMillis = now,
+                            groupId = existing?.groupId,
                         ),
                     )
                 }.onSuccess {
@@ -69,6 +73,37 @@ class RoomLedgerViewModel(
         viewModelScope.launch {
             runCatching { repository.setRoomActive(id, isActive, nowMillis()) }
                 .onFailure { _formError.value = "เปลี่ยนสถานะห้องไม่สำเร็จ กรุณาลองอีกครั้ง" }
+        }
+    }
+
+    fun createRoomGroup(name: String, onSaved: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.createRoomGroup(name, nowMillis()) }
+                .onSuccess { _formError.value = null; onSaved() }
+                .onFailure { _formError.value = it.message ?: "สร้างกลุ่มไม่สำเร็จ" }
+        }
+    }
+
+    fun renameRoomGroup(id: String, name: String, onSaved: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.renameRoomGroup(id, name, nowMillis()) }
+                .onSuccess { _formError.value = null; onSaved() }
+                .onFailure { _formError.value = it.message ?: "เปลี่ยนชื่อกลุ่มไม่สำเร็จ" }
+        }
+    }
+
+    fun deleteRoomGroup(id: String, onDeleted: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.deleteRoomGroup(id, nowMillis()) }
+                .onSuccess { _formError.value = null; onDeleted() }
+                .onFailure { _formError.value = it.message ?: "ลบกลุ่มไม่สำเร็จ" }
+        }
+    }
+
+    fun assignRoomToGroup(roomId: String, groupId: String?) {
+        viewModelScope.launch {
+            runCatching { repository.assignRoomToGroup(roomId, groupId, nowMillis()) }
+                .onFailure { _formError.value = it.message ?: "ย้ายกลุ่มห้องไม่สำเร็จ" }
         }
     }
 

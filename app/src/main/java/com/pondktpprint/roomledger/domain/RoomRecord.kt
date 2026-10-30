@@ -9,4 +9,5 @@ data class RoomRecord(
     val isActive: Boolean,
     val createdAtMillis: Long,
     val updatedAtMillis: Long,
+    val groupId: String? = null,
 )

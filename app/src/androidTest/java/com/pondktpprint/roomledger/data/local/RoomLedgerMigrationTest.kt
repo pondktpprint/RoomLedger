@@ -2,6 +2,7 @@ package com.pondktpprint.roomledger.data.local
 
 import android.content.Context
 import android.database.sqlite.SQLiteConstraintException
+import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.platform.app.InstrumentationRegistry
@@ -70,5 +71,56 @@ class RoomLedgerMigrationTest {
             old.query("SELECT name FROM rooms WHERE id='phase2-room'").use { cursor -> assertEquals(true, cursor.moveToFirst()); assertEquals("ห้องเฟสสอง", cursor.getString(0)) }
             old.query("SELECT waterCurrent FROM meter_readings WHERE id='phase2-reading'").use { cursor -> assertEquals(true, cursor.moveToFirst()); assertEquals(15L, cursor.getLong(0)) }
         } finally { v2.close() }
+    }
+
+    @Test fun versionThreeToFourPreservesFinancialHistoryAndAddsNullableGroupForeignKey() {
+        val name = "room-groups-v3-migration.db"
+        context.deleteDatabase(name)
+        val oldHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context).name(name).callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("CREATE TABLE rooms (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, monthlyRentSatang INTEGER NOT NULL, waterPricePerUnitSatang INTEGER NOT NULL, electricityPricePerUnitSatang INTEGER NOT NULL, isActive INTEGER NOT NULL, createdAtMillis INTEGER NOT NULL, updatedAtMillis INTEGER NOT NULL)")
+                    RoomLedgerDatabase.MIGRATION_1_2.migrate(db)
+                    RoomLedgerDatabase.MIGRATION_2_3.migrate(db)
+                }
+                override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            }).build(),
+        )
+        oldHelper.writableDatabase.use { old ->
+            old.execSQL("INSERT INTO rooms VALUES ('room-v3','ห้องเดิม',500000,100,50,1,10,20)")
+            old.execSQL("INSERT INTO meter_readings VALUES ('reading-v3','room-v3','2026-10',10,15,0,5,20,25,0,5,10,20)")
+            old.execSQL("INSERT INTO bills VALUES ('bill-v3','reading-v3','room-v3','ห้องเดิม','2026-10',10,15,0,5,100,500,20,25,0,5,50,250,500000,500750,'UNPAID',10,20,0,500750,NULL)")
+            old.execSQL("INSERT INTO payments VALUES ('payment-v3','bill-v3',100000,30,'legacy receipt','RECEIPT',NULL,30,30)")
+            old.execSQL("INSERT INTO payment_allocations VALUES ('allocation-v3','payment-v3','bill-v3',100000,30)")
+            old.execSQL("INSERT INTO debt_carry_forwards VALUES ('carry-v3','bill-v3','room-v3','2026-11',NULL,400750,30,30)")
+        }
+        oldHelper.close()
+
+        val migrated = Room.databaseBuilder(context, RoomLedgerDatabase::class.java, name)
+            .addMigrations(RoomLedgerDatabase.MIGRATION_1_2, RoomLedgerDatabase.MIGRATION_2_3, RoomLedgerDatabase.MIGRATION_3_4)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val sql = migrated.openHelper.writableDatabase
+            assertEquals(4, sql.version)
+            sql.query("SELECT name,groupId FROM rooms WHERE id='room-v3'").use { cursor ->
+                assertEquals(true, cursor.moveToFirst()); assertEquals("ห้องเดิม", cursor.getString(0)); assertEquals(true, cursor.isNull(1))
+            }
+            sql.query("SELECT COUNT(*) FROM meter_readings WHERE id='reading-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(1L, cursor.getLong(0)) }
+            sql.query("SELECT COUNT(*) FROM bills WHERE id='bill-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(1L, cursor.getLong(0)) }
+            sql.query("SELECT amountSatang FROM payments WHERE id='payment-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(100000L, cursor.getLong(0)) }
+            sql.query("SELECT amountSatang FROM payment_allocations WHERE id='allocation-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(100000L, cursor.getLong(0)) }
+            sql.query("SELECT amountSatang FROM debt_carry_forwards WHERE id='carry-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(400750L, cursor.getLong(0)) }
+            sql.query("SELECT COUNT(*) FROM room_groups").use { cursor -> cursor.moveToFirst(); assertEquals(0L, cursor.getLong(0)) }
+
+            sql.execSQL("INSERT INTO room_groups VALUES ('group-v4','อาคาร A',0,40,40)")
+            sql.execSQL("UPDATE rooms SET groupId='group-v4' WHERE id='room-v3'")
+            sql.execSQL("DELETE FROM room_groups WHERE id='group-v4'")
+            sql.query("SELECT groupId FROM rooms WHERE id='room-v3'").use { cursor -> cursor.moveToFirst(); assertEquals(true, cursor.isNull(0)) }
+            sql.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(false, cursor.moveToNext()) }
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
     }
 }

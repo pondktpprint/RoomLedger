@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -20,7 +22,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +34,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,14 +44,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pondktpprint.roomledger.domain.RoomRecord
+import com.pondktpprint.roomledger.domain.RoomGroup
+import com.pondktpprint.roomledger.domain.RoomDeletionResult
 import com.pondktpprint.roomledger.domain.RoomRepository
 import com.pondktpprint.roomledger.domain.formatSatangAsBaht
 import com.pondktpprint.roomledger.RoomLedgerApplication
@@ -56,12 +65,22 @@ import com.pondktpprint.roomledger.RoomLedgerApplication
 fun RoomLedgerScreen(repository: RoomRepository) {
     val viewModel: RoomLedgerViewModel = viewModel(factory = RoomLedgerViewModel.Factory(repository))
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
+    val roomGroups by viewModel.roomGroups.collectAsStateWithLifecycle()
     val formError by viewModel.formError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var editorRoom by remember { mutableStateOf<RoomRecord?>(null) }
     var showEditor by rememberSaveable { mutableStateOf(false) }
     var billingDestination by rememberSaveable { mutableStateOf(0) }
     var showBackupSettings by rememberSaveable { mutableStateOf(false) }
+    var groupEditor by remember { mutableStateOf<GroupEditorState?>(null) }
+    var groupToDelete by remember { mutableStateOf<RoomGroup?>(null) }
+    var assignmentRoom by remember { mutableStateOf<RoomRecord?>(null) }
+    var roomToDelete by remember { mutableStateOf<RoomRecord?>(null) }
+    var roomDeletionBlocked by remember { mutableStateOf<RoomRecord?>(null) }
+    var collapsedGroups by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    var ungroupedCollapsed by rememberSaveable { mutableStateOf(false) }
+    var selectedManagementGroup by rememberSaveable { mutableStateOf("ALL") }
 
     if (showBackupSettings) {
         BackupSettingsScreen(
@@ -72,7 +91,7 @@ fun RoomLedgerScreen(repository: RoomRepository) {
     }
 
     if (billingDestination != 0) {
-        BillingSection(rooms, repository, onBack = { billingDestination = 0 }, startWithHistory = billingDestination == 2)
+        BillingSection(rooms, roomGroups, repository, onBack = { billingDestination = 0 }, startWithHistory = billingDestination == 2)
         return
     }
 
@@ -113,7 +132,10 @@ fun RoomLedgerScreen(repository: RoomRepository) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("ห้องพักทั้งหมด", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Column(Modifier.weight(1f)) {
+                    Text("จัดการห้องพัก", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("${rooms.size} ห้อง · ${roomGroups.size} กลุ่ม", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Button(onClick = {
                     editorRoom = null
                     viewModel.clearFormError()
@@ -122,21 +144,82 @@ fun RoomLedgerScreen(repository: RoomRepository) {
                     Text("+ เพิ่มห้อง")
                 }
             }
+            if (roomGroups.isEmpty()) {
+                OutlinedButton(onClick = { groupEditor = GroupEditorState(null) }, modifier = Modifier.fillMaxWidth()) { Text("+ เพิ่มกลุ่มห้อง") }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    OutlinedButton(onClick = { groupEditor = GroupEditorState(null) }) { Text("+ เพิ่มกลุ่ม") }
+                }
+            }
             Spacer(Modifier.height(8.dp))
-            if (rooms.isEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { FilterChip(selectedManagementGroup == "ALL", onClick = { selectedManagementGroup = "ALL" }, label = { Text("ทุกกลุ่ม") }) }
+                items(roomGroups, key = RoomGroup::id) { group ->
+                    FilterChip(selectedManagementGroup == group.id, onClick = { selectedManagementGroup = group.id }, label = { Text(group.name) })
+                }
+                item { FilterChip(selectedManagementGroup == "UNGROUPED", onClick = { selectedManagementGroup = "UNGROUPED" }, label = { Text("ไม่จัดกลุ่ม") }) }
+            }
+            val managementRooms = when (selectedManagementGroup) {
+                "ALL" -> rooms
+                "UNGROUPED" -> rooms.filter { it.groupId == null || roomGroups.none { group -> group.id == it.groupId } }
+                else -> rooms.filter { it.groupId == selectedManagementGroup }
+            }
+            if (rooms.isEmpty() && roomGroups.isEmpty()) {
                 EmptyRooms()
+            } else if (managementRooms.isEmpty()) {
+                Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Text("กลุ่มนี้ยังไม่มีห้อง", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(items = rooms, key = RoomRecord::id) { room ->
+                    roomGroups.filter { selectedManagementGroup == "ALL" || selectedManagementGroup == it.id }.forEach { group ->
+                        val groupRooms = managementRooms.filter { it.groupId == group.id }
+                        item(key = "group-${group.id}") {
+                            RoomGroupHeader(
+                                group = group,
+                                roomCount = groupRooms.size,
+                                expanded = group.id !in collapsedGroups,
+                                onToggle = { collapsedGroups = if (group.id in collapsedGroups) collapsedGroups - group.id else collapsedGroups + group.id },
+                                onRename = { groupEditor = GroupEditorState(group) },
+                                onDelete = { groupToDelete = group },
+                            )
+                        }
+                        if (group.id !in collapsedGroups) items(items = groupRooms, key = RoomRecord::id) { room ->
+                            RoomCard(
+                                room = room,
+                                groupLabel = group.name,
+                                onEdit = { editorRoom = room; viewModel.clearFormError(); showEditor = true },
+                                onAssign = { assignmentRoom = room },
+                                onDelete = {
+                                    scope.launch {
+                                        runCatching { repository.roomHasFinancialHistory(room.id) }
+                                            .onSuccess { hasHistory -> if (hasHistory) roomDeletionBlocked = room else roomToDelete = room }
+                                            .onFailure { snackbarHostState.showSnackbar(it.message ?: "ตรวจสอบประวัติห้องไม่สำเร็จ") }
+                                    }
+                                },
+                                onActiveChanged = { active -> viewModel.setRoomActive(room.id, active) },
+                            )
+                        }
+                    }
+                    val ungroupedRooms = managementRooms.filter { it.groupId == null || roomGroups.none { group -> group.id == it.groupId } }
+                    if (selectedManagementGroup == "ALL" || selectedManagementGroup == "UNGROUPED") item(key = "group-ungrouped") {
+                        UngroupedHeader(roomCount = ungroupedRooms.size, expanded = !ungroupedCollapsed, onToggle = { ungroupedCollapsed = !ungroupedCollapsed })
+                    }
+                    if (!ungroupedCollapsed && (selectedManagementGroup == "ALL" || selectedManagementGroup == "UNGROUPED")) items(items = ungroupedRooms, key = RoomRecord::id) { room ->
                         RoomCard(
                             room = room,
-                            onEdit = {
-                                editorRoom = room
-                                viewModel.clearFormError()
-                                showEditor = true
+                            groupLabel = "ไม่จัดกลุ่ม",
+                            onEdit = { editorRoom = room; viewModel.clearFormError(); showEditor = true },
+                            onAssign = { assignmentRoom = room },
+                            onDelete = {
+                                scope.launch {
+                                    runCatching { repository.roomHasFinancialHistory(room.id) }
+                                        .onSuccess { hasHistory -> if (hasHistory) roomDeletionBlocked = room else roomToDelete = room }
+                                        .onFailure { snackbarHostState.showSnackbar(it.message ?: "ตรวจสอบประวัติห้องไม่สำเร็จ") }
+                                }
                             },
                             onActiveChanged = { active -> viewModel.setRoomActive(room.id, active) },
                         )
@@ -162,6 +245,52 @@ fun RoomLedgerScreen(repository: RoomRepository) {
                 }
             },
         )
+    }
+
+    groupEditor?.let { editor ->
+        RoomGroupEditorDialog(
+            group = editor.group,
+            errorMessage = formError,
+            onDismiss = { groupEditor = null; viewModel.clearFormError() },
+            onSave = { name ->
+                if (editor.group == null) viewModel.createRoomGroup(name) { groupEditor = null }
+                else viewModel.renameRoomGroup(editor.group.id, name) { groupEditor = null }
+            },
+        )
+    }
+    groupToDelete?.let { group ->
+        RoomGroupDeleteDialog(
+            group = group,
+            roomCount = rooms.count { it.groupId == group.id },
+            onDismiss = { groupToDelete = null },
+            onConfirm = { viewModel.deleteRoomGroup(group.id) { groupToDelete = null } },
+        )
+    }
+    assignmentRoom?.let { room ->
+        RoomGroupPickerDialog(
+            room = room,
+            groups = roomGroups,
+            onDismiss = { assignmentRoom = null },
+            onSelect = { groupId -> viewModel.assignRoomToGroup(room.id, groupId); assignmentRoom = null },
+        )
+    }
+    roomToDelete?.let { room ->
+        RoomDeleteConfirmDialog(
+            room = room,
+            onDismiss = { roomToDelete = null },
+            onConfirm = {
+                scope.launch {
+                    when (repository.deleteRoomPermanently(room.id)) {
+                        RoomDeletionResult.DELETED -> { roomToDelete = null; snackbarHostState.showSnackbar("ลบห้อง ${room.name} แล้ว") }
+                        RoomDeletionResult.HAS_HISTORY -> { roomToDelete = null; roomDeletionBlocked = room }
+                        RoomDeletionResult.NOT_FOUND -> { roomToDelete = null; snackbarHostState.showSnackbar("ไม่พบห้องนี้แล้ว") }
+                    }
+                }
+            },
+        )
+    }
+    roomDeletionBlocked?.let { room ->
+        RoomDeleteBlockedDialog(room = room, onDismiss = { roomDeletionBlocked = null })
     }
 }
 
@@ -194,7 +323,14 @@ private fun SummaryValue(label: String, value: String) {
 }
 
 @Composable
-private fun RoomCard(room: RoomRecord, onEdit: () -> Unit, onActiveChanged: (Boolean) -> Unit) {
+private fun RoomCard(
+    room: RoomRecord,
+    groupLabel: String,
+    onEdit: () -> Unit,
+    onAssign: () -> Unit,
+    onDelete: () -> Unit,
+    onActiveChanged: (Boolean) -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -211,6 +347,7 @@ private fun RoomCard(room: RoomRecord, onEdit: () -> Unit, onActiveChanged: (Boo
                         style = MaterialTheme.typography.bodySmall,
                         color = if (room.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Text(groupLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 OutlinedButton(onClick = onEdit) { Text("แก้ไข") }
             }
@@ -223,6 +360,10 @@ private fun RoomCard(room: RoomRecord, onEdit: () -> Unit, onActiveChanged: (Boo
             Spacer(Modifier.height(6.dp))
             RoomPriceLine("ค่าไฟ / หน่วย", room.electricityPricePerUnitSatang)
             Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onAssign, modifier = Modifier.weight(1f)) { Text("ย้ายกลุ่ม") }
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) { Text("ลบห้อง") }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -233,6 +374,113 @@ private fun RoomCard(room: RoomRecord, onEdit: () -> Unit, onActiveChanged: (Boo
             }
         }
     }
+}
+
+private data class GroupEditorState(val group: RoomGroup?)
+
+@Composable
+private fun RoomGroupHeader(
+    group: RoomGroup,
+    roomCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (expanded) "⌄" else "›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(group.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("$roomCount ห้อง", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = onRename) { Text("เปลี่ยนชื่อ") }
+                TextButton(onClick = onDelete) { Text("ลบกลุ่ม", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UngroupedHeader(roomCount: Int, expanded: Boolean, onToggle: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (expanded) "⌄" else "›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("ไม่จัดกลุ่ม", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("$roomCount ห้อง", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoomGroupEditorDialog(group: RoomGroup?, errorMessage: String?, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var name by remember(group?.id) { mutableStateOf(group?.name.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (group == null) "สร้างกลุ่มห้อง" else "เปลี่ยนชื่อกลุ่ม") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("ชื่อกลุ่ม") }, singleLine = true)
+                errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(name) }) { Text("บันทึก") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("ยกเลิก") } },
+    )
+}
+
+@Composable
+private fun RoomGroupDeleteDialog(group: RoomGroup, roomCount: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ลบกลุ่ม ${group.name}") },
+        text = { Text("ห้อง $roomCount ห้องในกลุ่มนี้จะยังอยู่ในระบบ และจะย้ายไปอยู่ในส่วน “ไม่จัดกลุ่ม”") },
+        confirmButton = { Button(onClick = onConfirm) { Text("ลบกลุ่ม") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("ยกเลิก") } },
+    )
+}
+
+@Composable
+private fun RoomGroupPickerDialog(room: RoomRecord, groups: List<RoomGroup>, onDismiss: () -> Unit, onSelect: (String?) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ย้ายห้อง ${room.name}") },
+        text = {
+            Column {
+                TextButton(onClick = { onSelect(null) }, modifier = Modifier.fillMaxWidth()) { Text("ไม่จัดกลุ่ม", modifier = Modifier.fillMaxWidth()) }
+                groups.forEach { group ->
+                    TextButton(onClick = { onSelect(group.id) }, modifier = Modifier.fillMaxWidth()) { Text(group.name, modifier = Modifier.fillMaxWidth()) }
+                }
+            }
+        },
+        confirmButton = { OutlinedButton(onClick = onDismiss) { Text("ปิด") } },
+    )
+}
+
+@Composable
+private fun RoomDeleteConfirmDialog(room: RoomRecord, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ยืนยันลบห้อง ${room.name}") },
+        text = { Text("การลบห้องนี้เป็นการลบถาวรและไม่สามารถเรียกคืนได้ ระบบตรวจแล้วว่าห้องนี้ไม่มีเลขมิเตอร์ บิล หรือประวัติการเงินที่อ้างอิงอยู่") },
+        confirmButton = { Button(onClick = onConfirm, colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("ลบถาวร") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("ยกเลิก") } },
+    )
+}
+
+@Composable
+private fun RoomDeleteBlockedDialog(room: RoomRecord, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ลบห้อง ${room.name} ไม่ได้") },
+        text = { Text("ห้องนี้มีเลขมิเตอร์ บิล รายการรับชำระ หรือประวัติยกยอดที่เกี่ยวข้อง ระบบจะเก็บประวัติทั้งหมดไว้ กรุณาปิดใช้งานห้องแทน") },
+        confirmButton = { Button(onClick = onDismiss) { Text("เข้าใจแล้ว") } },
+    )
 }
 
 @Composable

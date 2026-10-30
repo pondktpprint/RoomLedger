@@ -169,7 +169,7 @@ fun BackupSettingsScreen(database: RoomLedgerDatabase, onBack: () -> Unit) {
         title = { Text("ตรวจสอบข้อมูลสำรองแล้ว") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("วันที่สำรอง: ${RoomLedgerBackup.formattedDate(info.createdAtMillis)}")
-            Text("ห้อง ${info.roomCount} · มิเตอร์ ${info.readingCount} · บิล ${info.billCount} · รายการรับเงิน ${info.paymentCount}")
+            Text("กลุ่ม ${info.groupCount} · ห้อง ${info.roomCount} · มิเตอร์ ${info.readingCount} · บิล ${info.billCount} · รายการรับเงิน ${info.paymentCount}")
             if (info.billingMonths.isNotBlank()) Text("รอบบิล: ${info.billingMonths}")
             Text("การกู้คืนจะแทนที่ข้อมูลทั้งหมดในอุปกรณ์นี้ หลังยืนยันแล้วจะไม่รวมกับข้อมูลปัจจุบัน", color = MaterialTheme.colorScheme.error)
         } },

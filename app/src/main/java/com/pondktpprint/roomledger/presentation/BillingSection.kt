@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,7 +34,7 @@ private enum class BillingPage { MONTHLY, HISTORY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: () -> Unit, startWithHistory: Boolean = false) {
+fun BillingSection(rooms: List<RoomRecord>, groups: List<RoomGroup>, repository: RoomRepository, onBack: () -> Unit, startWithHistory: Boolean = false) {
     val scope = rememberCoroutineScope()
     var monthKey by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     val month = parseBillingMonth(monthKey) ?: YearMonth.now()
@@ -45,10 +46,22 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
     var roomHistory by remember { mutableStateOf<List<MonthlyBill>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var selectedGroupFilter by rememberSaveable { mutableStateOf(GROUP_FILTER_ALL) }
+    val groupSelection = when (selectedGroupFilter) {
+        GROUP_FILTER_ALL -> RoomGroupFilter.All
+        GROUP_FILTER_UNGROUPED -> RoomGroupFilter.Ungrouped
+        else -> RoomGroupFilter.Group(selectedGroupFilter)
+    }
+    val filteredRooms = filterRoomsByGroup(rooms, groups, groupSelection)
 
     fun loadMonth() { scope.launch { loading = true; bills = emptyList(); runCatching { repository.billsForMonth(monthKey) }.onSuccess { bills = it; error = null }.onFailure { error = it.message ?: "โหลดรายการไม่สำเร็จ" }; loading = false } }
     fun loadHistory(room: RoomRecord?) { historyRoom = room; scope.launch { loading = true; runCatching { if (room == null) rooms.flatMap { repository.billHistory(it.id) }.sortedByDescending(MonthlyBill::billingMonth) else repository.billHistory(room.id) }.onSuccess { roomHistory = it; error = null }.onFailure { error = it.message ?: "โหลดประวัติบิลไม่สำเร็จ" }; loading = false } }
     LaunchedEffect(monthKey) { loadMonth() }
+    LaunchedEffect(groups, selectedGroupFilter) {
+        if (selectedGroupFilter != GROUP_FILTER_ALL && selectedGroupFilter != GROUP_FILTER_UNGROUPED && groups.none { it.id == selectedGroupFilter }) {
+            selectedGroupFilter = GROUP_FILTER_ALL
+        }
+    }
     LaunchedEffect(page, startWithHistory) { if (page == BillingPage.HISTORY && historyRoom == null) loadHistory(null) }
     BackHandler(enabled = activeBill == null && activeRoom == null) {
         when { activeBill != null -> activeBill = null; activeRoom != null -> activeRoom = null; historyRoom != null -> { historyRoom = null; loadHistory(null) }; page == BillingPage.HISTORY -> { page = BillingPage.MONTHLY; onBack() }; else -> onBack() }
@@ -66,10 +79,13 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
 
     Scaffold(topBar = { TopAppBar(title = { Text(if (page == BillingPage.MONTHLY) "บันทึกมิเตอร์รายเดือน" else if (historyRoom == null) "ประวัติบิล" else "ประวัติบิล · ${historyRoom?.name}") }, navigationIcon = { IconButton(onClick = { if (historyRoom != null) { historyRoom = null; loadHistory(null) } else { page = BillingPage.MONTHLY; onBack() } }) { Text("‹", style = MaterialTheme.typography.headlineMedium) } }, actions = { if (page == BillingPage.MONTHLY) TextButton(onClick = { page = BillingPage.HISTORY }) { Text("ประวัติบิล") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+            if (page == BillingPage.MONTHLY || historyRoom == null) {
+                RoomGroupFilterRow(groups, selectedGroupFilter) { selectedGroupFilter = it }
+            }
             if (page == BillingPage.MONTHLY) {
                 MonthSelector(month, onMonthChange = { monthKey = it.toString() })
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth()) else {
-                    val activeRooms = rooms.filter(RoomRecord::isActive)
+                    val activeRooms = filteredRooms.filter(RoomRecord::isActive)
                     val completedIds = bills.mapTo(mutableSetOf(), MonthlyBill::roomId)
                     val completedCount = completedIds.intersect(activeRooms.map(RoomRecord::id).toSet()).size
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -82,8 +98,8 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
                 }
             } else if (loading) LinearProgressIndicator(Modifier.fillMaxWidth()) else {
                 if (historyRoom == null) {
-                    if (rooms.isEmpty()) EmptyBillingMessage("ยังไม่มีห้องพัก") else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
-                        items(rooms, key = RoomRecord::id) { room -> ListItem(headlineContent = { Text(room.name) }, supportingContent = { Text("ดูบิลย้อนหลังทั้งหมด") }, trailingContent = { Text("${roomHistory.count { it.roomId == room.id }} บิล") }, modifier = Modifier.clickable { loadHistory(room) }) }
+                    if (filteredRooms.isEmpty()) EmptyBillingMessage("ไม่พบห้องในกลุ่มที่เลือก") else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
+                        items(filteredRooms, key = RoomRecord::id) { room -> ListItem(headlineContent = { Text(room.name) }, supportingContent = { Text("ดูบิลย้อนหลังทั้งหมด") }, trailingContent = { Text("${roomHistory.count { it.roomId == room.id }} บิล") }, modifier = Modifier.clickable { loadHistory(room) }) }
                     }
                 } else if (roomHistory.none { it.roomId == historyRoom?.id }) EmptyBillingMessage("ห้องนี้ยังไม่มีประวัติบิล")
                 else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
@@ -94,6 +110,20 @@ fun BillingSection(rooms: List<RoomRecord>, repository: RoomRepository, onBack: 
         }
     }
 
+}
+
+private const val GROUP_FILTER_ALL = "__all_groups__"
+private const val GROUP_FILTER_UNGROUPED = "__ungrouped__"
+
+@Composable
+private fun RoomGroupFilterRow(groups: List<RoomGroup>, selected: String, onSelect: (String) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+        item { FilterChip(selected == GROUP_FILTER_ALL, onClick = { onSelect(GROUP_FILTER_ALL) }, label = { Text("ทุกกลุ่ม") }) }
+        items(groups, key = RoomGroup::id) { group ->
+            FilterChip(selected == group.id, onClick = { onSelect(group.id) }, label = { Text(group.name) })
+        }
+        item { FilterChip(selected == GROUP_FILTER_UNGROUPED, onClick = { onSelect(GROUP_FILTER_UNGROUPED) }, label = { Text("ไม่จัดกลุ่ม") }) }
+    }
 }
 
 @Composable private fun MeterValueField(label: String, value: String, onChange: (String) -> Unit, enabled: Boolean = true) {

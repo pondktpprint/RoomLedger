@@ -33,20 +33,28 @@ data class BackupPreview(
     val billCount: Int,
     val paymentCount: Int,
     val billingMonths: String,
+    val groupCount: Int = 0,
 )
 
 /** Versioned AES-GCM backup for the existing Room database. No passphrase is persisted. */
 object RoomLedgerBackup {
-    const val FORMAT_VERSION = 1
-    const val DATABASE_VERSION = 3
+    const val FORMAT_VERSION = 2
+    const val DATABASE_VERSION = 4
+    const val LEGACY_FORMAT_VERSION = 1
+    const val LEGACY_DATABASE_VERSION = 3
     const val PASSPHRASE_MIN_LENGTH = 8
     private const val ITERATIONS = 250_000
     private const val KEY_BITS = 256
     private const val GCM_TAG_BITS = 128
     private const val MAX_BACKUP_BYTES = 128 * 1024 * 1024
     private val magic = byteArrayOf('R'.code.toByte(), 'L'.code.toByte(), 'B'.code.toByte(), 'K'.code.toByte())
-    private val tables = listOf("rooms", "meter_readings", "bills", "payments", "payment_allocations", "debt_carry_forwards")
+    private val tables = listOf("room_groups", "rooms", "meter_readings", "bills", "payments", "payment_allocations", "debt_carry_forwards")
+    private val legacyTables = listOf("rooms", "meter_readings", "bills", "payments", "payment_allocations", "debt_carry_forwards")
     private val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(ZoneId.systemDefault())
+
+    fun supportsBackupVersion(formatVersion: Int, databaseVersion: Int): Boolean =
+        (formatVersion == LEGACY_FORMAT_VERSION && databaseVersion == LEGACY_DATABASE_VERSION) ||
+            (formatVersion == FORMAT_VERSION && databaseVersion == DATABASE_VERSION)
 
     suspend fun encryptedBytes(database: RoomLedgerDatabase, passphrase: CharArray, nowMillis: Long = System.currentTimeMillis()): ByteArray {
         val output = ByteArrayOutputStream()
@@ -57,7 +65,7 @@ object RoomLedgerBackup {
     suspend fun latestLocalChangeAt(database: RoomLedgerDatabase): Long = withContext(Dispatchers.IO) {
         database.withTransaction {
             var latest = 0L
-            for ((table, column) in listOf("rooms" to "updatedAtMillis", "meter_readings" to "updatedAtMillis", "bills" to "updatedAtMillis", "payments" to "updatedAtMillis", "payment_allocations" to "createdAtMillis", "debt_carry_forwards" to "updatedAtMillis")) {
+            for ((table, column) in listOf("room_groups" to "updatedAtMillis", "rooms" to "updatedAtMillis", "meter_readings" to "updatedAtMillis", "bills" to "updatedAtMillis", "payments" to "updatedAtMillis", "payment_allocations" to "createdAtMillis", "debt_carry_forwards" to "updatedAtMillis")) {
                 database.openHelper.writableDatabase.query("SELECT COALESCE(MAX(`$column`), 0) FROM `$table`").use { cursor ->
                     if (cursor.moveToFirst()) latest = maxOf(latest, cursor.getLong(0))
                 }
@@ -101,7 +109,7 @@ object RoomLedgerBackup {
         database.withTransaction {
             val sql = database.openHelper.writableDatabase
             sql.execSQL("PRAGMA defer_foreign_keys = ON")
-            listOf("payment_allocations", "payments", "debt_carry_forwards", "bills", "meter_readings", "rooms").forEach { sql.execSQL("DELETE FROM `$it`") }
+            listOf("payment_allocations", "payments", "debt_carry_forwards", "bills", "meter_readings", "rooms", "room_groups").forEach { sql.execSQL("DELETE FROM `$it`") }
             for (table in tables) {
                 val rows = decoded.getJSONObject("tables").getJSONArray(table)
                 for (index in 0 until rows.length()) {
@@ -142,7 +150,8 @@ object RoomLedgerBackup {
         val parsed = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
         val actualMagic = ByteArray(4).also(parsed::get)
         require(actualMagic.contentEquals(magic)) { "ไม่ใช่ไฟล์สำรอง RoomLedger" }
-        require(parsed.int == FORMAT_VERSION) { "ไม่รองรับไฟล์สำรองเวอร์ชันนี้" }
+        val headerFormatVersion = parsed.int
+        require(headerFormatVersion in LEGACY_FORMAT_VERSION..FORMAT_VERSION) { "ไม่รองรับไฟล์สำรองเวอร์ชันนี้" }
         val iterations = parsed.int
         require(iterations in 100_000..1_000_000) { "รูปแบบไฟล์สำรองไม่ถูกต้อง" }
         val salt = ByteArray(16).also(parsed::get)
@@ -160,29 +169,73 @@ object RoomLedgerBackup {
             val actualHash = MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") { "%02x".format(it) }
             require(MessageDigest.isEqual(expectedHash.toByteArray(), actualHash.toByteArray())) { "ตรวจสอบความถูกต้องของไฟล์ไม่ผ่าน" }
             val snapshot = JSONObject(payloadText)
-            validateSnapshot(database, snapshot)
-            return snapshot
+            return validateAndNormalizeSnapshot(database, snapshot, headerFormatVersion)
         } catch (e: IllegalArgumentException) { throw e }
         catch (e: Exception) { throw IllegalArgumentException("ไฟล์สำรองเสียหายหรือข้อมูลไม่ครบถ้วน", e) }
         finally { plain.fill(0) }
     }
 
-    private fun validateSnapshot(database: RoomLedgerDatabase, snapshot: JSONObject) {
-        require(snapshot.getInt("formatVersion") == FORMAT_VERSION) { "ไม่รองรับไฟล์สำรองเวอร์ชันนี้" }
+    private fun validateAndNormalizeSnapshot(database: RoomLedgerDatabase, snapshot: JSONObject, headerFormatVersion: Int): JSONObject {
+        val payloadFormatVersion = snapshot.getInt("formatVersion")
+        val sourceDatabaseVersion = snapshot.getInt("databaseVersion")
+        require(payloadFormatVersion == headerFormatVersion) { "เวอร์ชันไฟล์สำรองไม่ตรงกัน" }
         require(snapshot.getString("applicationId") == "com.pondktpprint.roomledger") { "ไฟล์นี้ไม่ได้สำรองจาก RoomLedger" }
         require(snapshot.getString("databaseName") == "room-ledger.db") { "ไฟล์นี้ไม่ได้สำรองจากฐานข้อมูล RoomLedger" }
-        require(snapshot.getInt("databaseVersion") == DATABASE_VERSION) { "เวอร์ชันฐานข้อมูลไม่เข้ากัน กรุณาใช้แอปเวอร์ชันที่รองรับ" }
+
+        val isLegacy = payloadFormatVersion == LEGACY_FORMAT_VERSION && sourceDatabaseVersion == LEGACY_DATABASE_VERSION
+        require(supportsBackupVersion(payloadFormatVersion, sourceDatabaseVersion)) {
+            "เวอร์ชันฐานข้อมูลไม่เข้ากัน กรุณาใช้แอปเวอร์ชันที่รองรับ"
+        }
         val tableData = snapshot.getJSONObject("tables")
-        require(tableData.keys().asSequence().toSet() == tables.toSet()) { "ไฟล์สำรองมีรายการตารางไม่ครบ" }
+        val sourceTables = if (isLegacy) legacyTables else tables
+        require(tableData.keys().asSequence().toSet() == sourceTables.toSet()) { "ไฟล์สำรองมีรายการตารางไม่ครบ" }
+        val sourceColumns = snapshot.getJSONObject("columns")
+        require(sourceColumns.keys().asSequence().toSet() == sourceTables.toSet()) { "ไฟล์สำรองมีโครงสร้างตารางไม่ครบ" }
         val liveDb = database.openHelper.writableDatabase
+        val liveColumnsByTable = mutableMapOf<String, List<String>>()
+        for (table in sourceTables) {
+            val liveColumns = liveDb.query("PRAGMA table_info(`$table`)").use(::columnNames)
+            val expectedColumns = if (isLegacy && table == "rooms") liveColumns - "groupId" else liveColumns
+            val storedColumns = snapshot.getJSONObject("columns").getJSONArray(table).let { arr -> (0 until arr.length()).map(arr::getString).toSet() }
+            require(storedColumns == expectedColumns) { "โครงสร้างตาราง $table ไม่เข้ากัน" }
+            liveColumnsByTable[table] = liveDb.query("PRAGMA table_info(`$table`)").use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
+            }
+            val rows = tableData.getJSONArray(table)
+            for (i in 0 until rows.length()) require(rows.getJSONObject(i).keys().asSequence().toSet() == storedColumns) { "ข้อมูลตาราง $table ไม่ครบถ้วน" }
+        }
+
+        if (isLegacy) {
+            val upgradedRooms = JSONArray()
+            val legacyRooms = tableData.getJSONArray("rooms")
+            for (index in 0 until legacyRooms.length()) upgradedRooms.put(legacyRooms.getJSONObject(index).put("groupId", JSONObject.NULL))
+            tableData.put("rooms", upgradedRooms)
+            tableData.put("room_groups", JSONArray())
+
+            val upgradedColumns = JSONObject()
+            for (table in tables) {
+                val names = when (table) {
+                    "room_groups" -> listOf("id", "name", "sortOrder", "createdAtMillis", "updatedAtMillis")
+                    "rooms" -> liveColumnsByTable.getValue(table)
+                    else -> snapshot.getJSONObject("columns").getJSONArray(table).let { arr -> (0 until arr.length()).map(arr::getString) }
+                }
+                upgradedColumns.put(table, JSONArray(names))
+            }
+            snapshot.put("columns", upgradedColumns)
+            snapshot.put("formatVersion", FORMAT_VERSION)
+            snapshot.put("databaseVersion", DATABASE_VERSION)
+        }
+
+        val normalizedTables = snapshot.getJSONObject("tables")
         for (table in tables) {
             val liveColumns = liveDb.query("PRAGMA table_info(`$table`)").use(::columnNames)
             val storedColumns = snapshot.getJSONObject("columns").getJSONArray(table).let { arr -> (0 until arr.length()).map(arr::getString).toSet() }
             require(storedColumns == liveColumns) { "โครงสร้างตาราง $table ไม่เข้ากัน" }
-            val rows = tableData.getJSONArray(table)
-            for (i in 0 until rows.length()) require(rows.getJSONObject(i).keys().asSequence().toSet() == storedColumns) { "ข้อมูลตาราง $table ไม่ครบถ้วน" }
+            val rows = normalizedTables.getJSONArray(table)
+            for (index in 0 until rows.length()) require(rows.getJSONObject(index).keys().asSequence().toSet() == liveColumns) { "ข้อมูลตาราง $table ไม่ครบถ้วน" }
         }
         validateRelations(tableData)
+        return snapshot
     }
 
     private fun validateRelations(data: JSONObject) {
@@ -192,6 +245,10 @@ object RoomLedgerBackup {
             require(rows.map(key).toSet().size == rows.size) { message }
         }
         val roomIds = ids("rooms")
+        val groupRows = rows("room_groups")
+        requireUnique(groupRows, { it.getString("id") }, "พบรหัสกลุ่มซ้ำ")
+        val groupIds = groupRows.map { it.getString("id") }.toSet()
+        for (row in groupRows) require(row.getString("name").isNotBlank() && row.getInt("sortOrder") >= 0) { "ข้อมูลกลุ่มห้องไม่ถูกต้อง" }
         val readingRows = rows("meter_readings")
         requireUnique(rows("rooms"), { it.getString("id") }, "พบรหัสห้องซ้ำ")
         requireUnique(readingRows, { it.getString("id") }, "พบรหัสมิเตอร์ซ้ำ")
@@ -215,6 +272,10 @@ object RoomLedgerBackup {
             require(row.getString("roomId") in roomIds) { "มิเตอร์อ้างอิงห้องที่ไม่มีอยู่" }
             require(tupleMonths.add("${row.getString("roomId")}\u0000${row.getString("billingMonth")}")) { "พบรอบมิเตอร์ซ้ำ" }
             requireValidMonth(row.getString("billingMonth"))
+        }
+        for (row in rows("rooms")) {
+            val groupId = row.opt("groupId")
+            require(groupId == null || groupId == JSONObject.NULL || groupId.toString() in groupIds) { "ห้องอ้างอิงกลุ่มที่ไม่มีอยู่" }
         }
         tupleMonths.clear()
         val billRoomById = mutableMapOf<String, String>()
@@ -313,7 +374,7 @@ object RoomLedgerBackup {
     private fun previewFrom(snapshot: JSONObject): BackupPreview {
         val tables = snapshot.getJSONObject("tables")
         val months = tables.getJSONArray("bills").let { arr -> (0 until arr.length()).map { arr.getJSONObject(it).getString("billingMonth") }.distinct().sorted() }
-        return BackupPreview(snapshot.getLong("createdAtMillis"), tables.getJSONArray("rooms").length(), tables.getJSONArray("meter_readings").length(), tables.getJSONArray("bills").length(), tables.getJSONArray("payments").length(), months.joinToString(", "))
+        return BackupPreview(snapshot.getLong("createdAtMillis"), tables.getJSONArray("rooms").length(), tables.getJSONArray("meter_readings").length(), tables.getJSONArray("bills").length(), tables.getJSONArray("payments").length(), months.joinToString(", "), tables.getJSONArray("room_groups").length())
     }
 
     private fun columnNames(cursor: Cursor): Set<String> = buildSet { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }

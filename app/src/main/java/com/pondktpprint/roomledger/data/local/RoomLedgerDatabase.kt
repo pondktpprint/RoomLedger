@@ -5,9 +5,10 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [RoomEntity::class, MeterReadingEntity::class, BillEntity::class, PaymentEntity::class, PaymentAllocationEntity::class, DebtCarryForwardEntity::class], version = 3, exportSchema = true)
+@Database(entities = [RoomGroupEntity::class, RoomEntity::class, MeterReadingEntity::class, BillEntity::class, PaymentEntity::class, PaymentAllocationEntity::class, DebtCarryForwardEntity::class], version = 4, exportSchema = true)
 abstract class RoomLedgerDatabase : RoomDatabase() {
     abstract fun roomDao(): RoomDao
+    abstract fun roomGroupDao(): RoomGroupDao
     abstract fun billingDao(): BillingDao
 
     companion object {
@@ -47,6 +48,15 @@ abstract class RoomLedgerDatabase : RoomDatabase() {
                     db.execSQL("INSERT INTO payments (id,billId,amountSatang,paymentDateMillis,note,entryType,reversesPaymentId,createdAtMillis,updatedAtMillis) VALUES (?,?,?,?,?,'RECEIPT',NULL,?,?)", arrayOf(paymentId, billId, amount, timestamp, "นำเข้าสถานะชำระเดิม", timestamp, timestamp))
                     db.execSQL("INSERT INTO payment_allocations (id,paymentId,sourceBillId,amountSatang,createdAtMillis) VALUES (?,?,?,?,?)", arrayOf(java.util.UUID.randomUUID().toString(), paymentId, billId, amount, timestamp))
                 }
+            }
+        }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS room_groups (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, sortOrder INTEGER NOT NULL, createdAtMillis INTEGER NOT NULL, updatedAtMillis INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_room_groups_sortOrder_name ON room_groups(sortOrder, name)")
+                db.execSQL("ALTER TABLE rooms ADD COLUMN groupId TEXT DEFAULT NULL REFERENCES room_groups(id) ON UPDATE NO ACTION ON DELETE SET NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_rooms_groupId ON rooms(groupId)")
+                db.query("PRAGMA foreign_key_check").use { cursor -> check(!cursor.moveToNext()) { "พบข้อมูลอ้างอิงฐานข้อมูลเดิมที่ไม่ถูกต้อง" } }
             }
         }
     }

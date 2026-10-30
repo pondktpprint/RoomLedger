@@ -5,8 +5,15 @@ import kotlinx.coroutines.flow.Flow
 /** Storage boundary; a future backup implementation can be added without coupling the UI to Firebase. */
 interface RoomRepository {
     fun observeRooms(): Flow<List<RoomRecord>>
+    fun observeRoomGroups(): Flow<List<RoomGroup>>
     suspend fun saveRoom(room: RoomRecord)
     suspend fun setRoomActive(id: String, isActive: Boolean, updatedAtMillis: Long)
+    suspend fun createRoomGroup(name: String, nowMillis: Long): RoomGroup
+    suspend fun renameRoomGroup(id: String, name: String, nowMillis: Long)
+    suspend fun deleteRoomGroup(id: String, nowMillis: Long)
+    suspend fun assignRoomToGroup(roomId: String, groupId: String?, nowMillis: Long)
+    suspend fun roomHasFinancialHistory(roomId: String): Boolean
+    suspend fun deleteRoomPermanently(roomId: String): RoomDeletionResult
     suspend fun billsForMonth(month: String): List<MonthlyBill>
     suspend fun billForRoomMonth(roomId: String, month: String): MonthlyBill?
     suspend fun billHistory(roomId: String): List<MonthlyBill>

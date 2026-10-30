@@ -188,7 +188,7 @@ class FirestoreCloudBackup(private val firestore: FirebaseFirestore) {
             totalByteSize = (fields["totalByteSize"] as Number).toInt(),
             state = fields["state"] as String,
         )
-        if (version.formatVersion != RoomLedgerBackup.FORMAT_VERSION || version.databaseVersion != RoomLedgerBackup.DATABASE_VERSION ||
+        if (!RoomLedgerBackup.supportsBackupVersion(version.formatVersion, version.databaseVersion) ||
             version.chunkCount !in 1..(CloudBackupFormat.MAX_BACKUP_BYTES / CloudBackupFormat.CHUNK_BYTES) ||
             version.totalByteSize !in 1..CloudBackupFormat.MAX_BACKUP_BYTES || !version.checksum.matches(Regex("[0-9a-f]{64}"))) null else version
     } catch (_: Exception) { null }

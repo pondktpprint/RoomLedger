@@ -9,6 +9,8 @@ import com.pondktpprint.roomledger.data.local.MeterReadingEntity
 import com.pondktpprint.roomledger.data.local.PaymentEntity
 import com.pondktpprint.roomledger.data.local.PaymentAllocationEntity
 import com.pondktpprint.roomledger.data.local.DebtCarryForwardEntity
+import com.pondktpprint.roomledger.data.local.RoomGroupEntity
+import com.pondktpprint.roomledger.data.local.toDomain as groupToDomain
 import androidx.room.withTransaction
 import com.pondktpprint.roomledger.data.local.RoomLedgerDatabase
 import com.pondktpprint.roomledger.domain.BillingCalculator
@@ -22,6 +24,8 @@ import com.pondktpprint.roomledger.domain.BillFinancialSummary
 import java.time.YearMonth
 import java.util.UUID
 import com.pondktpprint.roomledger.domain.RoomRecord
+import com.pondktpprint.roomledger.domain.RoomGroup
+import com.pondktpprint.roomledger.domain.RoomDeletionResult
 import com.pondktpprint.roomledger.domain.RoomRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -30,6 +34,9 @@ class RoomRepositoryImpl(private val roomDao: RoomDao, private val billingDao: B
     override fun observeRooms(): Flow<List<RoomRecord>> =
         roomDao.observeAll().map { rooms -> rooms.map { it.toDomain() } }
 
+    override fun observeRoomGroups(): Flow<List<RoomGroup>> =
+        requireDatabase().roomGroupDao().observeAll().map { groups -> groups.map { it.groupToDomain() } }
+
     override suspend fun saveRoom(room: RoomRecord) {
         roomDao.upsert(room.toEntity())
     }
@@ -37,6 +44,58 @@ class RoomRepositoryImpl(private val roomDao: RoomDao, private val billingDao: B
     override suspend fun setRoomActive(id: String, isActive: Boolean, updatedAtMillis: Long) {
         roomDao.setActive(id, isActive, updatedAtMillis)
     }
+
+    override suspend fun createRoomGroup(name: String, nowMillis: Long): RoomGroup {
+        val cleanName = validateGroupName(name)
+        val db = requireDatabase()
+        return db.withTransaction {
+            val group = RoomGroupEntity(UUID.randomUUID().toString(), cleanName, db.roomGroupDao().nextSortOrder(), nowMillis, nowMillis)
+            db.roomGroupDao().insert(group)
+            group.groupToDomain()
+        }
+    }
+
+    override suspend fun renameRoomGroup(id: String, name: String, nowMillis: Long) {
+        val cleanName = validateGroupName(name)
+        val groups = requireDatabase().roomGroupDao()
+        check(groups.rename(id, cleanName, nowMillis) == 1) { "ไม่พบกลุ่มห้องนี้" }
+    }
+
+    override suspend fun deleteRoomGroup(id: String, nowMillis: Long) {
+        val db = requireDatabase()
+        db.withTransaction {
+            db.roomGroupDao().ungroupRooms(id, nowMillis)
+            check(db.roomGroupDao().delete(id) == 1) { "ไม่พบกลุ่มห้องนี้" }
+        }
+    }
+
+    override suspend fun assignRoomToGroup(roomId: String, groupId: String?, nowMillis: Long) {
+        val db = requireDatabase()
+        db.withTransaction {
+            check(roomDao.findById(roomId) != null) { "ไม่พบห้องนี้" }
+            if (groupId != null) check(db.roomGroupDao().findById(groupId) != null) { "ไม่พบกลุ่มห้องนี้" }
+            check(roomDao.assignGroup(roomId, groupId, nowMillis) == 1) { "ย้ายห้องไม่สำเร็จ" }
+        }
+    }
+
+    override suspend fun roomHasFinancialHistory(roomId: String): Boolean {
+        val db = requireDatabase()
+        return db.withTransaction {
+            check(roomDao.findById(roomId) != null) { "ไม่พบห้องนี้" }
+            roomDao.hasFinancialHistory(roomId)
+        }
+    }
+
+    override suspend fun deleteRoomPermanently(roomId: String): RoomDeletionResult {
+        val db = requireDatabase()
+        return db.withTransaction {
+            if (roomDao.findById(roomId) == null) return@withTransaction RoomDeletionResult.NOT_FOUND
+            if (roomDao.hasFinancialHistory(roomId)) return@withTransaction RoomDeletionResult.HAS_HISTORY
+            if (roomDao.deleteIfEmpty(roomId) == 1) RoomDeletionResult.DELETED else RoomDeletionResult.NOT_FOUND
+        }
+    }
+
+    private fun requireDatabase(): RoomLedgerDatabase = database ?: error("Database transaction unavailable")
 
     override suspend fun billsForMonth(month: String) = billingDao.billsForMonth(month).map(BillEntity::toDomain)
     override suspend fun billForRoomMonth(roomId: String, month: String) = billingDao.billsForMonth(month).firstOrNull { it.roomId == roomId }?.toDomain()
@@ -227,6 +286,11 @@ class RoomRepositoryImpl(private val roomDao: RoomDao, private val billingDao: B
             billingDao.updateFinancials(bill.id, bill.carriedDebtSatang, bill.totalDueSatang, if (balance == 0L) PaymentState.PAID.name else PaymentState.UNPAID.name, nowMillis)
         }
     }
+}
+
+private fun validateGroupName(name: String): String = name.trim().also {
+    require(it.isNotEmpty()) { "กรุณากรอกชื่อกลุ่ม" }
+    require(it.length <= 60) { "ชื่อกลุ่มต้องไม่เกิน 60 ตัวอักษร" }
 }
 
 private fun BillEntity.toDomain() = MonthlyBill(id, roomId, roomName, billingMonth, waterPrevious, waterCurrent, waterAdjustment, waterUnits, waterRateSatang, waterChargeSatang, electricityPrevious, electricityCurrent, electricityAdjustment, electricityUnits, electricityRateSatang, electricityChargeSatang, rentSatang, totalSatang, PaymentState.valueOf(paymentState), createdAtMillis, updatedAtMillis, carriedDebtSatang, totalDueSatang, closedAtMillis)
