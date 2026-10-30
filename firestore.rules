@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owns(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/backups/{backupId} {
+      allow get, list: if owns(uid);
+      allow create: if owns(uid)
+        && request.resource.data.keys().hasAll([
+          'backupId', 'ownerUid', 'formatVersion', 'databaseVersion',
+          'createdAtMillis', 'checksumSha256', 'chunkCount', 'totalByteSize', 'state'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'backupId', 'ownerUid', 'formatVersion', 'databaseVersion',
+          'createdAtMillis', 'checksumSha256', 'chunkCount', 'totalByteSize', 'state'
+        ])
+        && request.resource.data.backupId == backupId
+        && request.resource.data.ownerUid == uid
+        && request.resource.data.formatVersion == 1
+        && request.resource.data.databaseVersion == 3
+        && request.resource.data.createdAtMillis is int
+        && request.resource.data.chunkCount is int
+        && request.resource.data.chunkCount > 0
+        && request.resource.data.chunkCount <= 40
+        && request.resource.data.totalByteSize is int
+        && request.resource.data.totalByteSize > 0
+        && request.resource.data.totalByteSize <= 20971520
+        && request.resource.data.checksumSha256 is string
+        && request.resource.data.checksumSha256.matches('^[0-9a-f]{64}$')
+        && request.resource.data.state == 'UPLOADING';
+
+      allow update: if owns(uid)
+        && resource.data.ownerUid == uid
+        && resource.data.state == 'UPLOADING'
+        && request.resource.data.keys().hasOnly([
+          'backupId', 'ownerUid', 'formatVersion', 'databaseVersion',
+          'createdAtMillis', 'checksumSha256', 'chunkCount', 'totalByteSize', 'state', 'completedAtMillis'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'completedAtMillis'])
+        && request.resource.data.backupId == resource.data.backupId
+        && request.resource.data.ownerUid == uid
+        && request.resource.data.formatVersion == resource.data.formatVersion
+        && request.resource.data.databaseVersion == resource.data.databaseVersion
+        && request.resource.data.createdAtMillis == resource.data.createdAtMillis
+        && request.resource.data.checksumSha256 == resource.data.checksumSha256
+        && request.resource.data.chunkCount == resource.data.chunkCount
+        && request.resource.data.totalByteSize == resource.data.totalByteSize
+        && (
+          (request.resource.data.state == 'UPLOADING'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([]))
+          || (request.resource.data.state in ['COMPLETE', 'FAILED']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'completedAtMillis'])
+            && (request.resource.data.state == 'FAILED' || request.resource.data.completedAtMillis is int))
+        );
+
+      allow delete: if owns(uid);
+
+      match /chunks/{chunkId} {
+        function parent() {
+          return get(/databases/$(database)/documents/users/$(uid)/backups/$(backupId)).data;
+        }
+
+        allow get, list, delete: if owns(uid);
+        allow create: if owns(uid)
+          && parent().ownerUid == uid
+          && parent().state == 'UPLOADING'
+          && request.resource.data.keys().hasAll([
+            'backupId', 'ownerUid', 'chunkIndex', 'totalChunks', 'checksumSha256', 'dataBase64'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'backupId', 'ownerUid', 'chunkIndex', 'totalChunks', 'checksumSha256', 'dataBase64'
+          ])
+          && request.resource.data.backupId == backupId
+          && request.resource.data.ownerUid == uid
+          && request.resource.data.chunkIndex is int
+          && request.resource.data.chunkIndex >= 0
+          && request.resource.data.chunkIndex < parent().chunkCount
+          && request.resource.data.totalChunks == parent().chunkCount
+          && request.resource.data.checksumSha256 is string
+          && request.resource.data.checksumSha256.matches('^[0-9a-f]{64}$')
+          && request.resource.data.dataBase64 is string
+          && request.resource.data.dataBase64.size() > 0
+          && request.resource.data.dataBase64.size() <= 700000
+          && request.resource.data.dataBase64.matches('^[A-Za-z0-9+/]*={0,2}$');
+
+        // Retry-safe no-op updates are allowed, but uploaded chunk contents are immutable.
+        allow update: if owns(uid)
+          && parent().state == 'UPLOADING'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([]);
+      }
+    }
+  }
+}

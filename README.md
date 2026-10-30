@@ -67,3 +67,23 @@ Phase 3 เพิ่ม migration แบบไม่ทำลายข้อม�
 ```bash
 ./gradlew connectedDebugAndroidTest
 ```
+
+## Google Sign-in และ Cloud Backup (Phase 4B)
+
+ฟังก์ชัน Google Sign-in/Firestore เป็นทางเลือก: หากไม่มีไฟล์ Firebase ในเครื่อง แอปยัง build ได้และจัดการข้อมูลใน Room แบบออฟไลน์ได้ตามปกติ การสำรอง Cloud ใช้ไฟล์เข้ารหัส Phase 4A ก่อนแบ่งเป็นชิ้นละไม่เกิน 512 KiB, จำกัดไฟล์ Cloud ไม่เกิน 20 MiB และเก็บเฉพาะไฟล์เข้ารหัสใน Firestore ภายใต้ UID ของผู้ใช้ ระบบแสดงเฉพาะ manifest ที่ COMPLETE และตรวจ checksum ของทุกชิ้นก่อนแสดงหรือกู้คืน
+
+รหัสผ่านสำรองจะถามใหม่ทุกครั้งและไม่ถูกเก็บในแอปหรืออัปโหลด การสำรองอัตโนมัติ/WorkManager จึงปิดไว้ เพราะแอปไม่มี key store สำหรับ passphrase ที่ผู้ใช้ตั้งและจะไม่เก็บรหัสผ่านแบบถอดกลับได้เพื่อใช้งานเบื้องหลัง การสำรอง Cloud เป็นการกดสั่งเอง และสามารถลองซ้ำได้เมื่อเครือข่ายขัดข้อง
+
+### ตั้งค่า Firebase ในเครื่องนักพัฒนา
+
+1. สร้าง Firebase project และเพิ่ม Android app ด้วย package name `com.pondktpprint.roomledger` ใน Firebase Console
+2. ดาวน์โหลด `google-services.json` ของ Android app และวางไว้ที่ `app/google-services.json` ไฟล์นี้ถูก ignore โดย Git และห้าม commit
+3. ใน **Authentication → Sign-in method** เปิด **Google** และกำหนด support email
+4. เพิ่ม SHA-1 certificate fingerprint ของ build ที่ใช้ใน **Project settings → Your apps → SHA certificate fingerprints** ตรวจค่า debug/release ด้วย `./gradlew signingReport` แล้วรอให้การตั้งค่า OAuth อัปเดต
+5. เปิด **Firestore Database** ใน Native mode เลือก region และใช้ Spark plan ได้ โค้ดอ่าน Web OAuth client ID จาก resource `default_web_client_id` ที่ Google Services plugin สร้างจากไฟล์ Firebase ไม่ต้องคัดลอกหรือใส่ client ID ใน source code
+6. ติดตั้ง rules ใน `firestore.rules` ผ่าน **Firestore Database → Rules** ใน Firebase Console แล้วกด Publish ก่อนใช้งาน Cloud Backup ห้ามเปิด Test Mode หรือ public access
+7. Sync Gradle และติดตั้งแอปใหม่เพื่อให้ Google Services plugin อ่าน config ในเครื่อง หากไม่มีไฟล์ดังกล่าว plugin จะไม่ถูก apply และหน้าจอจะแสดงวิธีตั้งค่า โดยข้อมูล Room ยังคงใช้งานได้
+
+โครงสร้าง Cloud ใช้ `users/{uid}/backups/{backupId}` และ subcollection `chunks` ไฟล์แต่ละเวอร์ชันมี ID เฉพาะเพื่อป้องกันการเขียนทับข้ามอุปกรณ์ ระบบตรวจและเก็บสามเวอร์ชันล่าสุดที่สมบูรณ์ ส่วน upload ที่ค้าง/ล้มเหลวจะไม่ถูกแสดงและจะล้างเมื่อเก่ากว่า 24 ชั่วโมง การกู้คืนต้องลงชื่อเข้าใช้ เลือกเวอร์ชัน ใส่ passphrase ตรวจ preview และยืนยันการแทนที่ข้อมูลในเครื่อง
+
+Firebase Emulator ไม่ได้ตั้งค่าใน repository นี้ การทดสอบ unit ครอบคลุมการแบ่ง/ประกอบ chunk, checksum, การขาดหาย, สถานะ incomplete, retry และการเก็บสามเวอร์ชัน; tests ของ Phase 4A ครอบคลุม passphrase ผิด, integrity, rollback และการทำงานของ Room โดยไม่ต้องลงชื่อเข้าใช้

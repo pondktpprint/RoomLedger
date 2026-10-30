@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -119,7 +122,10 @@ fun BackupSettingsScreen(database: RoomLedgerDatabase, onBack: () -> Unit) {
 
     BackHandler(enabled = !busy) { if (confirmRestore || preview != null) clearRestoreSecrets() else onBack() }
     Scaffold(topBar = { TopAppBar(title = { Text("สำรองและกู้คืนข้อมูล") }, navigationIcon = { TextButton(onClick = onBack, enabled = !busy) { Text("‹ กลับ") } }) }) { insets ->
-        Column(Modifier.fillMaxSize().padding(insets).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            CloudBackupSettingsSection(database)
+            HorizontalDivider()
+            Text("สำรองและกู้คืนไฟล์ในเครื่อง", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             Text("สำรองข้อมูลไว้ในที่ปลอดภัย และใช้รหัสผ่านเดียวกันเมื่อต้องการกู้คืน", style = MaterialTheme.typography.bodyMedium)
             Text("สำรองข้อมูลล่าสุด: ${if (lastBackup > 0) RoomLedgerBackup.formattedDate(lastBackup) else "ยังไม่มีประวัติการสำรอง"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { password = ""; showBackupPassword = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("สำรองข้อมูล") }
